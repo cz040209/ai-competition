@@ -1,0 +1,24 @@
+{
+  "name": "New user, no goals, first day of the cycle",
+  "input": {
+    "currency": "MYR",
+    "balance": 250000,
+    "buffer": 50000,
+    "spent_today": 0,
+    "today": "2026-09-03",
+    "next_payday": "2026-09-25",
+    "cycle_start": "2026-09-03",
+    "cycle_days": 30,
+    "commitments": [],
+    "goals": []
+  },
+  "expected": {
+    "days_to_payday": 22,
+    "cycle_elapsed": 0,
+    "reserved": 0,
+    "goal_reserve": 0,
+    "unclaimed": 200000,
+    "per_day": 9090,
+    "safe_today": 9090
+  }
+}

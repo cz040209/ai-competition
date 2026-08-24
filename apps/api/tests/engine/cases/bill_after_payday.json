@@ -1,0 +1,33 @@
+{
+  "name": "A bill falling after payday is not reserved",
+  "input": {
+    "currency": "MYR",
+    "balance": 418040,
+    "buffer": 80000,
+    "spent_today": 0,
+    "today": "2026-09-03",
+    "next_payday": "2026-09-25",
+    "cycle_start": "2026-08-26",
+    "cycle_days": 30,
+    "commitments": [
+      {"id": "rent", "amount": 120000, "due_date": "2026-09-05"},
+      {"id": "phone", "amount": 8900, "due_date": "2026-09-08"},
+      {"id": "loan", "amount": 52000, "due_date": "2026-09-10"},
+      {"id": "sub", "amount": 5500, "due_date": "2026-09-14"},
+      {"id": "net", "amount": 13900, "due_date": "2026-09-30"}
+    ],
+    "goals": [
+      {"id": "g1", "monthly": 27000},
+      {"id": "g2", "monthly": 52500}
+    ]
+  },
+  "expected": {
+    "days_to_payday": 22,
+    "cycle_elapsed": 8,
+    "reserved": 186400,
+    "goal_reserve": 21200,
+    "unclaimed": 130440,
+    "per_day": 5929,
+    "safe_today": 5929
+  }
+}
