@@ -75,7 +75,7 @@ describe("App", () => {
     await user.click(await screen.findByRole("button", { name: /sign in/i }));
 
     for (const label of ["Today", "Activity", "Butler", "Plan", "More"]) {
-      expect(await screen.findByRole("button", { name: new RegExp(label, "i") })).toBeInTheDocument();
+      expect(await screen.findByRole("button", { name: new RegExp(`^${label}$`, "i") })).toBeInTheDocument();
     }
   });
 

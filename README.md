@@ -9,11 +9,11 @@ monetary amount is an exact integer number of Malaysian sen—never a float.
 
 ## Current status
 
-The backend and the web foundation are implemented through the first 11 tasks
-of the development plan. The working API has authentication and a seeded
-dashboard; the React/Vite client has its design system, generated API types,
-query layer, and money formatting in place. The interactive application shell
-and Today screen are the next implementation tasks.
+The backend and interactive web experience are implemented through the first
+13 tasks of the development plan. The working API has authentication and a
+seeded dashboard; the React/Vite client has the login gate, app shell,
+navigation, and a live Today dashboard driven by that API. Containerising both
+halves together is the remaining planned task.
 
 Implemented:
 
@@ -33,8 +33,11 @@ Implemented:
 - `GET /v1/dashboard/today`, backed by the pure engine and returning only
   integer-sen monetary values.
 - OpenAPI-generated TypeScript contracts consumed by the web workspace.
-- React/Vite web scaffold, TanStack Query API layer, formatter tests, and the
-  full visual stylesheet extracted from the design prototype.
+- React/Vite client with TanStack Query API layer, login gate, boot animation,
+  five-tab app shell, and design-prototype stylesheet.
+- Live Today dashboard with safe-to-spend odometer, balance claim line,
+  transparent calculation, commitment, draft, and goal-progress views—plus
+  explicit loading and error states that never guess a financial figure.
 
 ## The demo financial picture
 
@@ -132,10 +135,12 @@ DEMO_TODAY=2026-09-03 .venv/bin/pytest -q
 .venv/bin/lint-imports
 ```
 
-Web formatter test:
+Web tests, typecheck, and production build:
 
 ```bash
-npm --workspace @kira/web run test -- src/lib/money.test.ts
+npm --workspace @kira/web run test
+npm --workspace @kira/web run typecheck
+npm --workspace @kira/web run build
 ```
 
 Regenerate the TypeScript contract after an API-schema change:
@@ -149,8 +154,6 @@ bash scripts/gen-contracts.sh
 - `.env.example` uses the Docker service hostname `db`, which is correct from
   inside a future app container. Local backend commands should use `localhost`
   as shown above.
-- The web app's App shell and Today screen are not yet implemented, so complete
-  web typechecking/building follows the next frontend task.
 - `docker compose` currently starts PostgreSQL only. The one-container API +
   web production image is a later planned task.
 

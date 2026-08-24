@@ -1,14 +1,9 @@
 import "@testing-library/jest-dom/vitest";
 
 class ImmediateIntersectionObserver {
-  constructor(private readonly callback: IntersectionObserverCallback) {}
+  constructor(_: IntersectionObserverCallback) {}
 
-  observe(target: Element) {
-    this.callback(
-      [{ isIntersecting: true, target } as unknown as IntersectionObserverEntry],
-      this as unknown as IntersectionObserver,
-    );
-  }
+  observe(_: Element) {}
 
   unobserve() {}
 
@@ -19,4 +14,6 @@ class ImmediateIntersectionObserver {
   }
 }
 
-vi.stubGlobal("IntersectionObserver", ImmediateIntersectionObserver);
+beforeEach(() => {
+  vi.stubGlobal("IntersectionObserver", ImmediateIntersectionObserver);
+});
