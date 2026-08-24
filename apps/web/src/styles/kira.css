@@ -426,6 +426,11 @@
   animation:confFill 1s var(--spring) .3s both;}
 .field-c span{font-size:9.5px;color:rgba(233,237,233,.45);font-weight:700;display:block;margin-top:4px;text-align:right;}
 
+/* The receipt-capture flow already owns .field; keep login inputs independent. */
+input.field{width:100%;padding:13px 15px;border-radius:14px;border:1px solid var(--line-2);
+  background:var(--surface);font-family:inherit;font-size:15px;color:var(--ink);animation:none;}
+input.field:focus{outline:2px solid var(--brass);outline-offset:2px;}
+
 /* composer buttons */
 .cbtn{width:36px;height:36px;border-radius:12px;display:grid;place-items:center;flex:none;
   color:#F4F7F3;background:rgba(233,237,233,.2);border:1px solid rgba(233,237,233,.3);
