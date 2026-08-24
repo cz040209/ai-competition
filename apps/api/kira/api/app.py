@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from kira.api.routers import auth
+from kira.api.routers import auth, dashboard
 from kira.config import get_settings
 
 
@@ -30,6 +30,7 @@ def create_app() -> FastAPI:
         return {"status": "ok"}
 
     app.include_router(auth.router)
+    app.include_router(dashboard.router)
     return app
 
 

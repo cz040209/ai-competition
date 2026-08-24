@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncGenerator
+
+os.environ.setdefault("DEMO_TODAY", "2026-09-03")
+os.environ.setdefault("JWT_SECRET", "test-secret-for-kira-auth-tests-123456")
 
 import pytest
 from httpx import ASGITransport, AsyncClient
