@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: str = "postgresql+asyncpg://kira:kira@localhost:5432/kira"
-    jwt_secret: str = "change-me-in-production"
+    jwt_secret: str = "development-only-replace-with-a-secure-jwt-secret"
     jwt_algorithm: str = "HS256"
     access_token_ttl_minutes: int = 15
     refresh_token_ttl_days: int = 30
