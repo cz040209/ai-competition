@@ -77,7 +77,7 @@ class TestMoneyArithmetic:
         assert Money(100) < Money(200)
         assert max(Money(0), Money(-500)) == Money(0)
         with pytest.raises(CurrencyMismatch):
-            Money(100, "MYR") < Money(100, "SGD")
+            assert Money(100, "MYR") < Money(100, "SGD")
 
     def test_sum_of_empty_is_zero(self):
         assert Money.sum([]) == Money.zero()
