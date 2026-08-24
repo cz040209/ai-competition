@@ -9,13 +9,13 @@ integer sen, the day planner knows KL.
 docker compose up --build
 ```
 
-Then open <http://localhost:8000> and sign in as `demo@kira.app` /
+Then open <http://localhost:8001> and sign in as `demo@kira.app` /
 `demo-money-butler`. Today should read **RM52.97**.
 
-If port 8000 is already in use, choose another host port, for example:
+If port 8001 is already in use, choose another host port, for example:
 
 ```bash
-KIRA_PORT=8001 docker compose up --build
+KIRA_PORT=8002 docker compose up --build
 ```
 
 ## Develop

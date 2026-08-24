@@ -26,7 +26,7 @@ services:
       DEMO_TODAY: "2026-09-03"
       SEED_DEMO: "1"
     ports:
-      - "${KIRA_PORT:-8000}:8000"
+      - "${KIRA_PORT:-8001}:8000"
 
 volumes:
   kira-db:
