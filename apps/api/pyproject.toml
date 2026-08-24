@@ -57,4 +57,4 @@ forbidden_modules = ["kira.api", "kira.services", "kira.adapters", "kira.db", "k
 [[tool.importlinter.contracts]]
 name = "layers point one way"
 type = "layers"
-layers = ["kira.api", "kira.services", "kira.engine"]
+layers = ["(kira.api)", "(kira.services)", "kira.engine"]

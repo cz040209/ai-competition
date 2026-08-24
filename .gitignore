@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+.import_linter_cache/
 node_modules/
 dist/
 .env
