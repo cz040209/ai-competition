@@ -15,5 +15,18 @@ services:
       timeout: 3s
       retries: 10
 
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://kira:kira@db:5432/kira
+      JWT_SECRET: ${JWT_SECRET:-development-only-replace-with-a-secure-jwt-secret}
+      DEMO_TODAY: "2026-09-03"
+      SEED_DEMO: "1"
+    ports:
+      - "${KIRA_PORT:-8000}:8000"
+
 volumes:
   kira-db:
