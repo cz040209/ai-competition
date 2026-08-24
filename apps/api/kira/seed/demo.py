@@ -10,8 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from kira.db.models import (
     HORIZON_LONG,
     HORIZON_SHORT,
+    SOURCE_MANUAL,
     SOURCE_RECEIPT,
     SOURCE_VOICE,
+    TXN_CONFIRMED,
     TXN_DRAFT,
     Account,
     Commitment,
@@ -55,11 +57,36 @@ GOALS = (
     ),
 )
 
+# Cycle-to-date spending, all of it already confirmed and already spent. The
+# opening balance below is raised by exactly this total, so the derived balance
+# — and therefore Today's RM52.97 — is unchanged by the history's presence.
+CONFIRMED = (
+    ("Grab — KLCC to home", 1620, "transport", SOURCE_MANUAL, date(2026, 9, 2)),
+    ("Family Mart", 1250, "groceries", SOURCE_RECEIPT, date(2026, 9, 2)),
+    ("Village Park Restoran", 2350, "food", SOURCE_RECEIPT, date(2026, 9, 1)),
+    ("Touch 'n Go reload", 5000, "transport", SOURCE_MANUAL, date(2026, 9, 1)),
+    ("Jaya Grocer", 8745, "groceries", SOURCE_RECEIPT, date(2026, 8, 31)),
+    ("Uniqlo Mid Valley", 7900, "shopping", SOURCE_RECEIPT, date(2026, 8, 31)),
+    ("Zus Coffee", 1190, "food", SOURCE_RECEIPT, date(2026, 8, 30)),
+    ("GSC Mid Valley", 4200, "fun", SOURCE_MANUAL, date(2026, 8, 30)),
+    ("Petronas Setapak", 9000, "transport", SOURCE_RECEIPT, date(2026, 8, 29)),
+    ("Instant transfer fee", 50, "fees", SOURCE_MANUAL, date(2026, 8, 29)),
+    ("Mixue", 890, "food", SOURCE_VOICE, date(2026, 8, 28)),
+    ("Watsons", 3560, "health", SOURCE_RECEIPT, date(2026, 8, 28)),
+    ("Duit raya — Adik Aina", 5000, "family", SOURCE_MANUAL, date(2026, 8, 27)),
+    ("Coursera — Python track", 7900, "education", SOURCE_MANUAL, date(2026, 8, 27)),
+    ("Guardian pharmacy", 2480, "health", SOURCE_MANUAL, date(2026, 8, 26)),
+    ("Masjid Wilayah donation", 2000, "charity", SOURCE_MANUAL, date(2026, 8, 26)),
+)
+
+SPENT_THIS_CYCLE = sum(sen for _, sen, _, _, _ in CONFIRMED)
+OPENING_BALANCE = 418040 + SPENT_THIS_CYCLE
+
 DRAFTS = (
     (
         "Nasi Kandar Pelita",
         1890,
-        "Food",
+        "food",
         SOURCE_RECEIPT,
         94,
         "Line item total matched, tax line ignored.",
@@ -67,7 +94,7 @@ DRAFTS = (
     (
         "Grab — office to KLCC",
         1400,
-        "Transport",
+        "transport",
         SOURCE_VOICE,
         71,
         "Heard 'fourteen ringgit'. Amount is worth a second look.",
@@ -110,7 +137,7 @@ async def seed_demo_user(session: AsyncSession) -> User:
             user_id=user.id,
             name="Maybank current",
             kind="bank",
-            opening_balance=Money(418040),
+            opening_balance=Money(OPENING_BALANCE),
         )
     )
 
@@ -135,6 +162,20 @@ async def seed_demo_user(session: AsyncSession) -> User:
                 saved=Money(saved),
                 monthly=Money(monthly),
                 note=note,
+            )
+        )
+
+    # Oldest first, so created_at rises with the day it happened.
+    for merchant, sen, category, source, occurred_on in reversed(CONFIRMED):
+        session.add(
+            Transaction(
+                user_id=user.id,
+                merchant=merchant,
+                amount=Money(sen),
+                category=category,
+                occurred_on=occurred_on,
+                status=TXN_CONFIRMED,
+                source=source,
             )
         )
 

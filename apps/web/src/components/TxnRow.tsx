@@ -1,0 +1,46 @@
+import type { Transaction } from "@kira/contracts";
+
+import { fmt } from "../lib/money";
+import { IcActivity, IcCam, IcMic, IcPen } from "./Icons";
+
+const SOURCE_LABEL: Record<string, string> = {
+  manual: "Manual",
+  receipt: "Receipt",
+  voice: "Voice",
+  import: "Import",
+};
+
+/** How a transaction arrived, so a wrong figure can be traced to its source. */
+export function SourceIcon({ source, size = 16 }: { source: string; size?: number }) {
+  if (source === "receipt") return <IcCam size={size} />;
+  if (source === "voice") return <IcMic size={size} />;
+  if (source === "manual") return <IcPen size={size} />;
+  return <IcActivity size={size} />;
+}
+
+export function sourceLabel(source: string): string {
+  return SOURCE_LABEL[source] ?? "Imported";
+}
+
+export function TxnRow({ txn, onOpen }: { txn: Transaction; onOpen: (txn: Transaction) => void }) {
+  return (
+    <button
+      type="button"
+      className="txn tapp"
+      style={{ width: "100%", background: "none", border: 0, textAlign: "left", font: "inherit" }}
+      aria-label={`${txn.merchant}, RM${fmt(txn.amount_sen)}`}
+      onClick={() => onOpen(txn)}
+    >
+      <span className="txn-ic">
+        <SourceIcon source={txn.source} />
+      </span>
+      <span style={{ flex: 1, minWidth: 0 }}>
+        <b style={{ fontSize: 14, letterSpacing: "-.01em" }}>{txn.merchant}</b>
+        <span style={{ display: "block", fontSize: 11.5, color: "var(--muted)" }}>
+          {txn.category_label} · {sourceLabel(txn.source)}
+        </span>
+      </span>
+      <span className="money" style={{ fontSize: 14.5 }}>−RM{fmt(txn.amount_sen)}</span>
+    </button>
+  );
+}

@@ -77,3 +77,37 @@ class DashboardTodayResponse(ResponseModel):
     drafts_waiting: int
     next_commitment: NextCommitmentResponse | None
     goals: list[GoalSummaryResponse]
+
+
+class TransactionResponse(ResponseModel):
+    id: uuid.UUID
+    merchant: str
+    amount_sen: int
+    category: str
+    category_label: str
+    occurred_on: date
+    status: str
+    source: str
+    confidence: int | None
+    note: str
+
+
+class ActivityDayResponse(ResponseModel):
+    date: date
+    total_sen: int
+    transactions: list[TransactionResponse]
+
+
+class CategorySummaryResponse(ResponseModel):
+    slug: str
+    label: str
+    spent_this_cycle_sen: int
+    count: int
+
+
+class ActivityResponse(ResponseModel):
+    drafts: list[TransactionResponse]
+    draft_total_sen: int
+    days: list[ActivityDayResponse]
+    spent_this_cycle_sen: int
+    categories: list[CategorySummaryResponse]

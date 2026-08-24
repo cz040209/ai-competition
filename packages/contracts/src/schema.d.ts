@@ -123,10 +123,117 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/transactions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Activity
+         * @description The ledger, optionally narrowed to one category. Drafts and chips are never narrowed.
+         */
+        get: operations["get_activity_v1_transactions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/transactions/{transaction_id}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Confirm */
+        post: operations["post_confirm_v1_transactions__transaction_id__confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/transactions/{transaction_id}/discard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Discard */
+        post: operations["post_discard_v1_transactions__transaction_id__discard_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/transactions/{transaction_id}/unconfirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Unconfirm */
+        post: operations["post_unconfirm_v1_transactions__transaction_id__unconfirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** ActivityDayResponse */
+        ActivityDayResponse: {
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Total Sen */
+            total_sen: number;
+            /** Transactions */
+            transactions: components["schemas"]["TransactionResponse"][];
+        };
+        /** ActivityResponse */
+        ActivityResponse: {
+            /** Drafts */
+            drafts: components["schemas"]["TransactionResponse"][];
+            /** Draft Total Sen */
+            draft_total_sen: number;
+            /** Days */
+            days: components["schemas"]["ActivityDayResponse"][];
+            /** Spent This Cycle Sen */
+            spent_this_cycle_sen: number;
+            /** Categories */
+            categories: components["schemas"]["CategorySummaryResponse"][];
+        };
+        /** CategorySummaryResponse */
+        CategorySummaryResponse: {
+            /** Slug */
+            slug: string;
+            /** Label */
+            label: string;
+            /** Spent This Cycle Sen */
+            spent_this_cycle_sen: number;
+            /** Count */
+            count: number;
+        };
         /** DashboardTodayResponse */
         DashboardTodayResponse: {
             /**
@@ -245,6 +352,35 @@ export interface components {
              * @default bearer
              */
             token_type: string;
+        };
+        /** TransactionResponse */
+        TransactionResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Merchant */
+            merchant: string;
+            /** Amount Sen */
+            amount_sen: number;
+            /** Category */
+            category: string;
+            /** Category Label */
+            category_label: string;
+            /**
+             * Occurred On
+             * Format: date
+             */
+            occurred_on: string;
+            /** Status */
+            status: string;
+            /** Source */
+            source: string;
+            /** Confidence */
+            confidence: number | null;
+            /** Note */
+            note: string;
         };
         /** UserResponse */
         UserResponse: {
@@ -461,6 +597,130 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DashboardTodayResponse"];
+                };
+            };
+        };
+    };
+    get_activity_v1_transactions_get: {
+        parameters: {
+            query?: {
+                category?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActivityResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_confirm_v1_transactions__transaction_id__confirm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                transaction_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransactionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_discard_v1_transactions__transaction_id__discard_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                transaction_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransactionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_unconfirm_v1_transactions__transaction_id__unconfirm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                transaction_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransactionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

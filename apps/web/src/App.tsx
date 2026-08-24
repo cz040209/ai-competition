@@ -1,10 +1,18 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 
-import { useDashboardToday } from "./api/hooks";
+import {
+  useActivity,
+  useConfirmDraft,
+  useDashboardToday,
+  useDiscardDraft,
+  useUnconfirm,
+} from "./api/hooks";
 import { IcActivity, IcMore, IcPlan, IcSpark, IcToday } from "./components/Icons";
 import { Motes } from "./components/Motes";
 import { NavItem } from "./components/NavItem";
 import { ScrollContext } from "./components/Reveal";
+import { SheetHostContext } from "./components/Sheet";
+import { Activity } from "./screens/Activity";
 import { Login } from "./screens/Login";
 import { Placeholder } from "./screens/Placeholder";
 import { Today } from "./screens/Today";
@@ -21,6 +29,13 @@ export function App() {
   const viewRef = useRef<HTMLDivElement>(null);
   const screenRef = useRef<HTMLDivElement>(null);
   const dashboard = useDashboardToday(signedIn);
+  const [category, setCategory] = useState<string | null>(null);
+  const activity = useActivity(signedIn && tab === "activity", category);
+  const confirm = useConfirmDraft();
+  const discard = useDiscardDraft();
+  const unconfirm = useUnconfirm();
+  const settlingId =
+    [confirm, discard, unconfirm].find((mutation) => mutation.isPending)?.variables ?? null;
 
   useEffect(() => {
     const timer = setTimeout(() => setBoot(false), 2500);
@@ -100,45 +115,54 @@ export function App() {
             </span>
           </div>
 
-          <ScrollContext.Provider value={viewRef}>
-            <div className="viewport" ref={viewRef}>
-              <div className="page" key={signedIn ? tab : "login"}>
-                {!signedIn && <Login onSignedIn={() => setSignedIn(true)} />}
-                {signedIn && tab === "today" && (
-                  <Today
-                    data={dashboard.data}
-                    isLoading={dashboard.isLoading}
-                    isError={dashboard.isError}
-                    go={go}
-                  />
-                )}
-                {signedIn && tab === "activity" && (
-                  <Placeholder
-                    title="Activity"
-                    blurb="Drafts from receipts and voice notes wait here until you confirm them. Nothing enters your ledger unconfirmed."
-                    week="2"
-                  />
-                )}
-                {signedIn && tab === "butler" && (
-                  <Placeholder
-                    title="Butler"
-                    blurb="Ask about affordability, why a number moved, or how to recover an overspend. Every answer shows its working."
-                    week="7"
-                  />
-                )}
-                {signedIn && tab === "plan" && (
-                  <Placeholder title="Plan" blurb="Goals, scenarios, and the day planner." week="3" />
-                )}
-                {signedIn && tab === "more" && (
-                  <Placeholder
-                    title="More"
-                    blurb="Bills, accounts, and the safety and audit trail."
-                    week="2"
-                  />
-                )}
+          <SheetHostContext.Provider value={screenRef}>
+            <ScrollContext.Provider value={viewRef}>
+              <div className="viewport" ref={viewRef}>
+                <div className="page" key={signedIn ? tab : "login"}>
+                  {!signedIn && <Login onSignedIn={() => setSignedIn(true)} />}
+                  {signedIn && tab === "today" && (
+                    <Today
+                      data={dashboard.data}
+                      isLoading={dashboard.isLoading}
+                      isError={dashboard.isError}
+                      go={go}
+                    />
+                  )}
+                  {signedIn && tab === "activity" && (
+                    <Activity
+                      data={activity.data}
+                      isLoading={activity.isLoading}
+                      isError={activity.isError}
+                      onConfirm={confirm.mutate}
+                      onDiscard={discard.mutate}
+                      onUnconfirm={unconfirm.mutate}
+                      settlingId={settlingId}
+                      category={category}
+                      onCategory={setCategory}
+                      go={go}
+                    />
+                  )}
+                  {signedIn && tab === "butler" && (
+                    <Placeholder
+                      title="Butler"
+                      blurb="Ask about affordability, why a number moved, or how to recover an overspend. Every answer shows its working."
+                      week="7"
+                    />
+                  )}
+                  {signedIn && tab === "plan" && (
+                    <Placeholder title="Plan" blurb="Goals, scenarios, and the day planner." week="3" />
+                  )}
+                  {signedIn && tab === "more" && (
+                    <Placeholder
+                      title="More"
+                      blurb="Bills, accounts, and the safety and audit trail."
+                      week="2"
+                    />
+                  )}
+                </div>
               </div>
-            </div>
-          </ScrollContext.Provider>
+            </ScrollContext.Provider>
+          </SheetHostContext.Provider>
 
           {signedIn && (
             <nav className="nav">

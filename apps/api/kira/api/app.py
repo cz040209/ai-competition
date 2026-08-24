@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import Scope
 
-from kira.api.routers import auth, dashboard
+from kira.api.routers import auth, dashboard, transactions
 from kira.config import get_settings
 
 
@@ -56,6 +56,7 @@ def create_app(*, static_dir: Path | None = None) -> FastAPI:
 
     app.include_router(auth.router)
     app.include_router(dashboard.router)
+    app.include_router(transactions.router)
 
     # In the shipped image the built bundle sits beside the package. In
     # development it is absent and Vite serves the UI instead, so this is

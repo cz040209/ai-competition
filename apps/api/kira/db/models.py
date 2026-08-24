@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -14,7 +14,8 @@ from kira.money import Money
 
 TXN_DRAFT = "draft"
 TXN_CONFIRMED = "confirmed"
-TXN_STATUSES = (TXN_DRAFT, TXN_CONFIRMED)
+TXN_DISCARDED = "discarded"
+TXN_STATUSES = (TXN_DRAFT, TXN_CONFIRMED, TXN_DISCARDED)
 
 SOURCE_MANUAL = "manual"
 SOURCE_RECEIPT = "receipt"
@@ -27,6 +28,10 @@ HORIZON_LONG = "long"
 
 def _uuid() -> uuid.UUID:
     return uuid.uuid4()
+
+
+def _now() -> datetime:
+    return datetime.now(tz=UTC)
 
 
 class User(Base):
@@ -122,4 +127,8 @@ class Transaction(Base):
     source: Mapped[str] = mapped_column(String(12), default=SOURCE_MANUAL)
     confidence: Mapped[int | None] = mapped_column(Integer, nullable=True)
     note: Mapped[str] = mapped_column(Text, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Client-side default: server now() is transaction time, so rows written in one
+    # commit would tie and the ledger's within-day order would be undefined.
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, server_default=func.now()
+    )

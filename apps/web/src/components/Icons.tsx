@@ -49,3 +49,28 @@ export const IcSpark = (p: IconProps) => (
   <Svg {...p} d={<path d="M12 4.5 13.7 10 19 12l-5.3 2-1.7 5.5L10.3 14 5 12l5.3-2Z" />} />
 );
 export const IcArrow = (p: IconProps) => <Svg {...p} d={<path d="M5 12h13m-5-5 5 5-5 5" />} />;
+export const IcPen = (p: IconProps) => (
+  <Svg {...p} d={<><path d="M4 20h4L19 9a2.5 2.5 0 0 0-3.5-3.5L4.5 16.5 4 20Z" /></>} />
+);
+export const IcCam = (p: IconProps) => (
+  <Svg
+    {...p}
+    d={
+      <>
+        <path d="M3 8.5h3.5L8 6h8l1.5 2.5H21v10H3v-10Z" />
+        <circle cx="12" cy="13" r="3.2" />
+      </>
+    }
+  />
+);
+export const IcMic = (p: IconProps) => (
+  <Svg
+    {...p}
+    d={
+      <>
+        <rect x="9" y="3" width="6" height="11" rx="3" />
+        <path d="M5.5 12a6.5 6.5 0 0 0 13 0M12 18.5V21" />
+      </>
+    }
+  />
+);
