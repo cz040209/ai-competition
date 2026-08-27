@@ -1,0 +1,45 @@
+"""Every capability the Butler has, in one registry.
+
+Adding a module to the Butler is adding a file here and one line below. The
+graph, the guard, the approval flow and the API do not change — which is the
+whole of the "controls all modules, present and future" requirement.
+"""
+
+from __future__ import annotations
+
+from kira.agent.tools import capture, commitments, dashboard, goals, ledger, memory
+from kira.agent.tools.spec import (
+    EvidenceRow,
+    ToolContext,
+    ToolRegistry,
+    ToolResult,
+    ToolSpec,
+    ToolSpecError,
+    money_str,
+)
+
+MODULES = (dashboard, ledger, goals, commitments, memory, capture)
+
+
+def build_registry() -> ToolRegistry:
+    registry = ToolRegistry()
+    for module in MODULES:
+        for spec in module.SPECS:
+            registry.register(spec)
+    return registry
+
+
+REGISTRY = build_registry()
+
+__all__ = [
+    "EvidenceRow",
+    "MODULES",
+    "REGISTRY",
+    "ToolContext",
+    "ToolRegistry",
+    "ToolResult",
+    "ToolSpec",
+    "ToolSpecError",
+    "build_registry",
+    "money_str",
+]

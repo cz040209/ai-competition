@@ -1,11 +1,22 @@
-"""Persistent financial data, with balance derived from confirmed transactions."""
+"""Persistent state: financial rows, and the Butler's threads, memory and approvals."""
 
 from __future__ import annotations
 
 import uuid
 from datetime import UTC, date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text, Uuid, func
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Date,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    Uuid,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from kira.db.base import Base
@@ -132,3 +143,117 @@ class Transaction(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, server_default=func.now()
     )
+
+
+# ── Butler ────────────────────────────────────────────────────────────────────
+# The agent's own durable state. Nothing here holds money; the Butler reaches
+# financial rows only through services, and only after an approval.
+
+MEMORY_ACTIVE = "active"
+MEMORY_SUPERSEDED = "superseded"
+MEMORY_DELETED = "deleted"
+
+MEMORY_KINDS = ("preference", "constraint", "context", "person", "pattern")
+
+APPROVAL_PENDING = "pending"
+APPROVAL_APPLIED = "applied"
+APPROVAL_REJECTED = "rejected"
+APPROVAL_EXPIRED = "expired"
+
+ROLE_USER = "user"
+ROLE_KIRA = "kira"
+
+
+class ButlerThread(Base):
+    """One conversation. One per user by default, but the model allows more."""
+
+    __tablename__ = "butler_threads"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=_uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    title: Mapped[str] = mapped_column(String(120), default="Butler")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class ButlerMessage(Base):
+    """A turn. Evidence is stored as it was produced, not re-derived on read."""
+
+    __tablename__ = "butler_messages"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=_uuid)
+    thread_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("butler_threads.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    role: Mapped[str] = mapped_column(String(8))  # user | kira
+    content: Mapped[str] = mapped_column(Text, default="")
+    # [[label, value], …] exactly as the executed tools returned them.
+    evidence: Mapped[list] = mapped_column(JSON, default=list)
+    tool_calls: Mapped[list] = mapped_column(JSON, default=list)
+    # Receipt or voice capture that produced this turn, when there was one.
+    attachment: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class ButlerMemory(Base):
+    """A durable fact about the user, superseded rather than overwritten."""
+
+    __tablename__ = "butler_memories"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=_uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[str] = mapped_column(String(16), index=True)
+    subject: Mapped[str] = mapped_column(String(80))
+    fact: Mapped[str] = mapped_column(Text)
+    source_message_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    confidence: Mapped[int] = mapped_column(Integer, default=70)
+    status: Mapped[str] = mapped_column(String(12), default=MEMORY_ACTIVE, index=True)
+    superseded_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ButlerApproval(Base):
+    """A projection of a LangGraph interrupt: what was proposed, and what became of it."""
+
+    __tablename__ = "butler_approvals"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=_uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    thread_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("butler_threads.id", ondelete="CASCADE"), index=True
+    )
+    tool: Mapped[str] = mapped_column(String(60))
+    args: Mapped[dict] = mapped_column(JSON, default=dict)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    evidence: Mapped[list] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(12), default=APPROVAL_PENDING, index=True)
+    # The checkpointer's key for the paused run, so a decision resumes the graph.
+    graph_thread_id: Mapped[str] = mapped_column(String(80))
+    tool_call_id: Mapped[str] = mapped_column(String(80), default="")
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    audit_event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class AuditEvent(Base):
+    """Who did what, and to which row. Append-only by convention."""
+
+    __tablename__ = "audit_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=_uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    actor: Mapped[str] = mapped_column(String(16))  # user | butler
+    action: Mapped[str] = mapped_column(String(60), index=True)
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

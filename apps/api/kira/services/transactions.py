@@ -12,7 +12,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kira.categories import label_for
-from kira.db.models import TXN_CONFIRMED, TXN_DISCARDED, TXN_DRAFT, Transaction, User
+from kira.db.models import (
+    SOURCE_MANUAL,
+    TXN_CONFIRMED,
+    TXN_DISCARDED,
+    TXN_DRAFT,
+    Transaction,
+    User,
+)
 from kira.money import Money
 
 
@@ -26,6 +33,10 @@ class AlreadySettled(Exception):
 
 class NotConfirmed(Exception):
     """Only a confirmed transaction can be returned to the drafts."""
+
+
+class InvalidTransaction(Exception):
+    """The proposed transaction is not something that can go on the ledger."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,6 +168,61 @@ async def list_activity(
         ),
         categories=categories,
     )
+
+
+async def create_transaction(
+    session: AsyncSession,
+    user: User,
+    *,
+    merchant: str,
+    amount_sen: int,
+    occurred_on: date,
+    category: str = "uncategorised",
+    source: str = SOURCE_MANUAL,
+    confidence: int | None = None,
+    note: str = "",
+) -> TransactionView:
+    """Add a transaction as a draft. Nothing enters the ledger unconfirmed.
+
+    Every capture path — typed, scanned, spoken, imported — lands here, so the
+    rule that a machine-read amount is a proposal and not a fact is enforced in
+    one place rather than at each caller.
+    """
+    if not merchant.strip():
+        raise InvalidTransaction("a transaction needs a merchant")
+    if amount_sen <= 0:
+        raise InvalidTransaction("a transaction needs a positive amount")
+    if confidence is not None and not 0 <= confidence <= 100:
+        raise InvalidTransaction("confidence is a percentage")
+    txn = Transaction(
+        user_id=user.id,
+        merchant=merchant.strip(),
+        amount=Money(amount_sen, user.currency),
+        category=category,
+        occurred_on=occurred_on,
+        status=TXN_DRAFT,
+        source=source,
+        confidence=confidence,
+        note=note,
+    )
+    session.add(txn)
+    await session.flush()
+    return _view(txn)
+
+
+async def get_transaction(
+    session: AsyncSession, user: User, transaction_id: uuid.UUID
+) -> TransactionView:
+    txn = (
+        await session.execute(
+            select(Transaction).where(
+                Transaction.id == transaction_id, Transaction.user_id == user.id
+            )
+        )
+    ).scalar_one_or_none()
+    if txn is None:
+        raise TransactionNotFound(str(transaction_id))
+    return _view(txn)
 
 
 async def _move(
