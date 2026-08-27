@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
@@ -111,3 +112,96 @@ class ActivityResponse(ResponseModel):
     days: list[ActivityDayResponse]
     spent_this_cycle_sen: int
     categories: list[CategorySummaryResponse]
+
+
+class ButlerMessageResponse(ResponseModel):
+    id: uuid.UUID
+    role: str
+    content: str
+    evidence: list[tuple[str, str]]
+    attachment: dict | None
+    created_at: datetime
+
+
+class ButlerApprovalResponse(ResponseModel):
+    id: uuid.UUID
+    thread_id: uuid.UUID
+    tool: str
+    args: dict
+    summary: str
+    evidence: list[tuple[str, str]]
+    status: str
+    created_at: datetime
+
+
+class ButlerThreadResponse(ResponseModel):
+    id: uuid.UUID
+    title: str
+    messages: list[ButlerMessageResponse]
+    pending_approvals: list[ButlerApprovalResponse]
+
+
+class ButlerAskRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=2000)
+    # A receipt or voice read from /v1/capture, passed back verbatim. It is a
+    # proposal the Butler can look at, never a ledger entry.
+    attachment: dict | None = None
+
+
+class ApprovalDecisionRequest(BaseModel):
+    action: Literal["accept", "edit", "reject"]
+    args: dict | None = None
+
+
+class MemoryResponse(ResponseModel):
+    id: uuid.UUID
+    kind: str
+    subject: str
+    fact: str
+    confidence: int
+    source_message_id: uuid.UUID | None
+    created_at: datetime
+    last_used_at: datetime | None
+
+
+class MemoryCorrectionRequest(BaseModel):
+    fact: str = Field(min_length=1, max_length=280)
+
+
+class CaptureFieldResponse(ResponseModel):
+    label: str
+    value: str
+    confidence: int
+
+
+class CaptureResponse(ResponseModel):
+    """What a reader made of a photo or a recording. Nothing is on the ledger."""
+
+    kind: str
+    source: str
+    merchant: str
+    amount_sen: int
+    occurred_on: date
+    category: str
+    confidence: int
+    note: str
+    transcript: str
+    fields: list[CaptureFieldResponse]
+
+
+class CaptureAvailability(ResponseModel):
+    """Whether the affordances should be offered at all."""
+
+    receipt: bool
+    voice: bool
+    max_bytes: int
+
+
+class CreateTransactionRequest(BaseModel):
+    merchant: str = Field(min_length=1, max_length=120)
+    amount_sen: int = Field(gt=0)
+    occurred_on: date
+    category: str = Field(default="uncategorised", max_length=40)
+    source: str = Field(default="manual", max_length=12)
+    confidence: int | None = Field(default=None, ge=0, le=100)
+    note: str = Field(default="", max_length=280)

@@ -136,7 +136,11 @@ export interface paths {
          */
         get: operations["get_activity_v1_transactions_get"];
         put?: never;
-        post?: never;
+        /**
+         * Post Transaction
+         * @description Add spending. It lands as a draft whatever route it came in by.
+         */
+        post: operations["post_transaction_v1_transactions_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -194,6 +198,189 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/butler/thread": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Default Thread
+         * @description The user's conversation, created on first ask.
+         */
+        get: operations["get_default_thread_v1_butler_thread_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/butler/threads/{thread_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Thread */
+        get: operations["get_thread_v1_butler_threads__thread_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/butler/threads/{thread_id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Message */
+        post: operations["post_message_v1_butler_threads__thread_id__messages_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/butler/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Default Message
+         * @description Ask without naming a thread. The client almost always wants this one.
+         */
+        post: operations["post_default_message_v1_butler_messages_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/butler/approvals/{approval_id}/respond": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Respond */
+        post: operations["respond_v1_butler_approvals__approval_id__respond_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/butler/memories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Memories
+         * @description Everything Kira believes about this user, in the order it is retrieved.
+         */
+        get: operations["list_memories_v1_butler_memories_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/butler/memories/{memory_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Memory */
+        delete: operations["delete_memory_v1_butler_memories__memory_id__delete"];
+        options?: never;
+        head?: never;
+        /** Correct Memory */
+        patch: operations["correct_memory_v1_butler_memories__memory_id__patch"];
+        trace?: never;
+    };
+    "/v1/capture": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Availability
+         * @description What the client may offer. A dead affordance is worse than none.
+         */
+        get: operations["availability_v1_capture_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/capture/receipt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Read Receipt */
+        post: operations["read_receipt_v1_capture_receipt_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/capture/voice": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Read Voice */
+        post: operations["read_voice_v1_capture_voice_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -223,6 +410,160 @@ export interface components {
             /** Categories */
             categories: components["schemas"]["CategorySummaryResponse"][];
         };
+        /** ApprovalDecisionRequest */
+        ApprovalDecisionRequest: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "accept" | "edit" | "reject";
+            /** Args */
+            args?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** Body_read_receipt_v1_capture_receipt_post */
+        Body_read_receipt_v1_capture_receipt_post: {
+            /** Image */
+            image: string;
+        };
+        /** Body_read_voice_v1_capture_voice_post */
+        Body_read_voice_v1_capture_voice_post: {
+            /** Audio */
+            audio: string;
+        };
+        /** ButlerApprovalResponse */
+        ButlerApprovalResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Thread Id
+             * Format: uuid
+             */
+            thread_id: string;
+            /** Tool */
+            tool: string;
+            /** Args */
+            args: {
+                [key: string]: unknown;
+            };
+            /** Summary */
+            summary: string;
+            /** Evidence */
+            evidence: [
+                string,
+                string
+            ][];
+            /** Status */
+            status: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** ButlerAskRequest */
+        ButlerAskRequest: {
+            /** Text */
+            text: string;
+            /** Attachment */
+            attachment?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** ButlerMessageResponse */
+        ButlerMessageResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Role */
+            role: string;
+            /** Content */
+            content: string;
+            /** Evidence */
+            evidence: [
+                string,
+                string
+            ][];
+            /** Attachment */
+            attachment: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** ButlerThreadResponse */
+        ButlerThreadResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Title */
+            title: string;
+            /** Messages */
+            messages: components["schemas"]["ButlerMessageResponse"][];
+            /** Pending Approvals */
+            pending_approvals: components["schemas"]["ButlerApprovalResponse"][];
+        };
+        /**
+         * CaptureAvailability
+         * @description Whether the affordances should be offered at all.
+         */
+        CaptureAvailability: {
+            /** Receipt */
+            receipt: boolean;
+            /** Voice */
+            voice: boolean;
+            /** Max Bytes */
+            max_bytes: number;
+        };
+        /** CaptureFieldResponse */
+        CaptureFieldResponse: {
+            /** Label */
+            label: string;
+            /** Value */
+            value: string;
+            /** Confidence */
+            confidence: number;
+        };
+        /**
+         * CaptureResponse
+         * @description What a reader made of a photo or a recording. Nothing is on the ledger.
+         */
+        CaptureResponse: {
+            /** Kind */
+            kind: string;
+            /** Source */
+            source: string;
+            /** Merchant */
+            merchant: string;
+            /** Amount Sen */
+            amount_sen: number;
+            /**
+             * Occurred On
+             * Format: date
+             */
+            occurred_on: string;
+            /** Category */
+            category: string;
+            /** Confidence */
+            confidence: number;
+            /** Note */
+            note: string;
+            /** Transcript */
+            transcript: string;
+            /** Fields */
+            fields: components["schemas"]["CaptureFieldResponse"][];
+        };
         /** CategorySummaryResponse */
         CategorySummaryResponse: {
             /** Slug */
@@ -233,6 +574,35 @@ export interface components {
             spent_this_cycle_sen: number;
             /** Count */
             count: number;
+        };
+        /** CreateTransactionRequest */
+        CreateTransactionRequest: {
+            /** Merchant */
+            merchant: string;
+            /** Amount Sen */
+            amount_sen: number;
+            /**
+             * Occurred On
+             * Format: date
+             */
+            occurred_on: string;
+            /**
+             * Category
+             * @default uncategorised
+             */
+            category: string;
+            /**
+             * Source
+             * @default manual
+             */
+            source: string;
+            /** Confidence */
+            confidence?: number | null;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
         };
         /** DashboardTodayResponse */
         DashboardTodayResponse: {
@@ -309,6 +679,36 @@ export interface components {
             email: string;
             /** Password */
             password: string;
+        };
+        /** MemoryCorrectionRequest */
+        MemoryCorrectionRequest: {
+            /** Fact */
+            fact: string;
+        };
+        /** MemoryResponse */
+        MemoryResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Subject */
+            subject: string;
+            /** Fact */
+            fact: string;
+            /** Confidence */
+            confidence: number;
+            /** Source Message Id */
+            source_message_id: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Last Used At */
+            last_used_at: string | null;
         };
         /** NextCommitmentResponse */
         NextCommitmentResponse: {
@@ -632,6 +1032,39 @@ export interface operations {
             };
         };
     };
+    post_transaction_v1_transactions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateTransactionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransactionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     post_confirm_v1_transactions__transaction_id__confirm_post: {
         parameters: {
             query?: never;
@@ -712,6 +1145,330 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TransactionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_default_thread_v1_butler_thread_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ButlerThreadResponse"];
+                };
+            };
+        };
+    };
+    get_thread_v1_butler_threads__thread_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ButlerThreadResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_message_v1_butler_threads__thread_id__messages_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ButlerAskRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_default_message_v1_butler_messages_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ButlerAskRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    respond_v1_butler_approvals__approval_id__respond_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                approval_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApprovalDecisionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_memories_v1_butler_memories_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryResponse"][];
+                };
+            };
+        };
+    };
+    delete_memory_v1_butler_memories__memory_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                memory_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    correct_memory_v1_butler_memories__memory_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                memory_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryCorrectionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    availability_v1_capture_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaptureAvailability"];
+                };
+            };
+        };
+    };
+    read_receipt_v1_capture_receipt_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_read_receipt_v1_capture_receipt_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaptureResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_voice_v1_capture_voice_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_read_voice_v1_capture_voice_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaptureResponse"];
                 };
             };
             /** @description Validation Error */

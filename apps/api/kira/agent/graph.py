@@ -71,6 +71,7 @@ def _memory_graph():
 
 
 _graph: Any = None
+_saver_context: Any = None
 
 
 def get_graph():
@@ -84,14 +85,23 @@ async def setup_checkpointer(dsn: str) -> BaseCheckpointSaver | None:
     These tables are LangGraph's schema, not ours, so they are created by an
     idempotent `setup()` at startup rather than by an Alembic migration.
     """
-    global _graph
+    global _graph, _saver_context
     from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
-    saver_context = AsyncPostgresSaver.from_conn_string(dsn)
-    saver = await saver_context.__aenter__()
+    _saver_context = AsyncPostgresSaver.from_conn_string(dsn)
+    saver = await _saver_context.__aenter__()
     await saver.setup()
     _graph = build_graph(saver)
     return saver
+
+
+async def close_checkpointer() -> None:
+    """Release the checkpointer's own psycopg pool at shutdown."""
+    global _graph, _saver_context
+    if _saver_context is not None:
+        await _saver_context.__aexit__(None, None, None)
+        _saver_context = None
+    _graph = None
 
 
 def graph_thread_id(thread_id: uuid.UUID, message_id: uuid.UUID) -> str:

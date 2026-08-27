@@ -54,12 +54,15 @@ class CaptureRead:
     fields: tuple[CaptureField, ...]
 
 
-def _fields(read: CaptureRead) -> tuple[CaptureField, ...]:
+def _fields(
+    merchant: str, amount_sen: int, occurred_on: date, category: str, confidence: int
+) -> tuple[CaptureField, ...]:
+    """The reader is least sure of the category: it inferred it, it did not read it."""
     return (
-        CaptureField("Merchant", read.merchant, read.confidence),
-        CaptureField("Total", f"RM{Money(read.amount_sen).ringgit_str()}", read.confidence),
-        CaptureField("Date", read.occurred_on.strftime("%-d %b %Y"), read.confidence),
-        CaptureField("Category", label_for(read.category), max(0, read.confidence - 11)),
+        CaptureField("Merchant", merchant, confidence),
+        CaptureField("Total", f"RM{Money(amount_sen).ringgit_str()}", confidence),
+        CaptureField("Date", occurred_on.strftime("%-d %b %Y"), confidence),
+        CaptureField("Category", label_for(category), max(0, confidence - 11)),
     )
 
 
@@ -73,19 +76,21 @@ def _guard(payload: bytes, limit: int) -> None:
 def read_receipt(image: bytes, *, today: date, max_bytes: int) -> CaptureRead:
     _guard(image, max_bytes)
     result = get_adapters().ocr.read_receipt(image)
-    read = CaptureRead(
+    occurred_on = result.occurred_on or today
+    return CaptureRead(
         kind=CAPTURE_RECEIPT,
         source=SOURCE_RECEIPT,
         merchant=result.merchant,
         amount_sen=result.amount.sen,
-        occurred_on=result.occurred_on or today,
+        occurred_on=occurred_on,
         category="food",
         confidence=result.confidence,
         note=result.note,
         transcript="",
-        fields=(),
+        fields=_fields(
+            result.merchant, result.amount.sen, occurred_on, "food", result.confidence
+        ),
     )
-    return CaptureRead(**{**read.__dict__, "fields": _fields(read)})
 
 
 def transcribe(audio: bytes, *, today: date, max_bytes: int) -> CaptureRead:
@@ -96,7 +101,7 @@ def transcribe(audio: bytes, *, today: date, max_bytes: int) -> CaptureRead:
     """
     _guard(audio, max_bytes)
     result = get_adapters().voice.transcribe(audio)
-    read = CaptureRead(
+    return CaptureRead(
         kind=CAPTURE_VOICE,
         source=SOURCE_VOICE,
         merchant=result.merchant,
@@ -106,6 +111,7 @@ def transcribe(audio: bytes, *, today: date, max_bytes: int) -> CaptureRead:
         confidence=result.confidence,
         note=result.note,
         transcript=result.transcript,
-        fields=(),
+        fields=_fields(
+            result.merchant, result.amount.sen, today, "transport", result.confidence
+        ),
     )
-    return CaptureRead(**{**read.__dict__, "fields": _fields(read)})

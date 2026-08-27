@@ -8,14 +8,16 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, status
 
 from kira.api.deps import CurrentUser, SessionDep
-from kira.api.schemas import ActivityResponse, TransactionResponse
+from kira.api.schemas import ActivityResponse, CreateTransactionRequest, TransactionResponse
 from kira.services.transactions import (
     Activity,
     AlreadySettled,
+    InvalidTransaction,
     NotConfirmed,
     TransactionNotFound,
     TransactionView,
     confirm_draft,
+    create_transaction,
     discard_draft,
     list_activity,
     unconfirm,
@@ -40,6 +42,29 @@ async def get_activity(
 ) -> Activity:
     """The ledger, optionally narrowed to one category. Drafts and chips are never narrowed."""
     return await list_activity(session, user, category)
+
+
+@router.post("", status_code=status.HTTP_201_CREATED, response_model=TransactionResponse)
+async def post_transaction(
+    body: CreateTransactionRequest, user: CurrentUser, session: SessionDep
+) -> TransactionView:
+    """Add spending. It lands as a draft whatever route it came in by."""
+    try:
+        view = await create_transaction(
+            session,
+            user,
+            merchant=body.merchant,
+            amount_sen=body.amount_sen,
+            occurred_on=body.occurred_on,
+            category=body.category,
+            source=body.source,
+            confidence=body.confidence,
+            note=body.note,
+        )
+    except InvalidTransaction as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+    await session.commit()
+    return view
 
 
 @router.post("/{transaction_id}/confirm", response_model=TransactionResponse)

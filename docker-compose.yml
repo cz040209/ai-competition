@@ -25,6 +25,10 @@ services:
       JWT_SECRET: ${JWT_SECRET:-development-only-replace-with-a-secure-jwt-secret}
       DEMO_TODAY: "2026-09-03"
       SEED_DEMO: "1"
+      # Unset means the Butler runs on its offline model: the graph, the tools,
+      # the approvals and the evidence are identical, only the prose differs.
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      BUTLER_MODEL: ${BUTLER_MODEL:-qwen-plus}
     ports:
       - "${KIRA_PORT:-8001}:8000"
 
