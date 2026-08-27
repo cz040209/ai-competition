@@ -585,3 +585,24 @@ input.field:focus{outline:2px solid var(--brass);outline-offset:2px;}
 /* --- app shell: the prototype rendered inside a page; this is the page --- */
 html, body, #root { height: 100%; margin: 0; }
 body { background: #E7EAE5; }
+
+/* ── Butler: capture sheets, and the memory list under More ───────────────── */
+.sheet-note{font-size:12px;color:rgba(233,237,233,.5);line-height:1.5;margin:14px 0 0;}
+.tool-line{display:flex;align-items:center;gap:9px;font-size:12.5px;color:rgba(233,237,233,.62);
+  animation:fadeUp .45s var(--spark,var(--spring)) both;}
+.tool-line .dot{width:5px;height:5px;border-radius:50%;background:var(--brass-lit);flex:none;}
+.composer .cbtn{width:34px;height:34px;border-radius:11px;flex:none;display:grid;place-items:center;
+  background:rgba(233,237,233,.1);border:1px solid rgba(233,237,233,.16);color:#EDF1ED;
+  transition:transform .18s var(--spring),background .18s ease;}
+.composer .cbtn:hover{background:rgba(201,164,92,.2);}
+.composer .cbtn:active{transform:scale(.9);}
+.composer .cbtn:disabled{opacity:.4;}
+.mem{padding:13px 0;border-bottom:1px solid var(--rule);}
+.mem:last-of-type{border-bottom:none;}
+.mem-head{display:flex;justify-content:space-between;gap:10px;align-items:baseline;}
+.mem-kind{font-size:9.5px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--brass);}
+.mem-fact{margin:5px 0 0;font-size:14px;line-height:1.5;}
+.mem-meta{margin:6px 0 0;font-size:11.5px;color:var(--muted);}
+.mem-acts{display:flex;gap:7px;margin-top:9px;}
+.mem-input{width:100%;font:inherit;font-size:14px;padding:9px 11px;border-radius:11px;
+  border:1px solid var(--rule);background:transparent;color:var(--ink);}

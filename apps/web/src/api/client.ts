@@ -68,6 +68,49 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+/**
+ * A response whose body is read as it arrives. Used for the Butler's SSE
+ * stream, which is a POST with a bearer header — neither of which
+ * `EventSource` supports.
+ */
+async function stream(path: string, body?: unknown): Promise<Response> {
+  const init: RequestInit = {
+    method: "POST",
+    headers: { accept: "text/event-stream" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  };
+  let response = await raw(path, init);
+  if (response.status === 401 && (await refresh())) {
+    response = await raw(path, init);
+  }
+  if (!response.ok) {
+    throw new ApiError(response.status, (await response.text()) || response.statusText);
+  }
+  return response;
+}
+
+/** Multipart, for the bytes a camera or a microphone produced. */
+async function upload<T>(path: string, form: FormData): Promise<T> {
+  // The browser sets the multipart boundary; sending our own content-type breaks it.
+  const init: RequestInit = { method: "POST", body: form, headers: { "content-type": "" } };
+  let response = await fetch(path, {
+    ...init,
+    credentials: "include",
+    headers: accessToken ? { authorization: `Bearer ${accessToken}` } : {},
+  });
+  if (response.status === 401 && (await refresh())) {
+    response = await fetch(path, {
+      ...init,
+      credentials: "include",
+      headers: accessToken ? { authorization: `Bearer ${accessToken}` } : {},
+    });
+  }
+  if (!response.ok) {
+    throw new ApiError(response.status, (await response.text()) || response.statusText);
+  }
+  return (await response.json()) as T;
+}
+
 export const api = {
   get: <T>(path: string) => request<T>(path, { method: "GET" }),
   post: <T>(path: string, body?: unknown) =>
@@ -75,6 +118,14 @@ export const api = {
       method: "POST",
       body: body === undefined ? undefined : JSON.stringify(body),
     }),
+  patch: <T>(path: string, body?: unknown) =>
+    request<T>(path, {
+      method: "PATCH",
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }),
+  delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
+  stream,
+  upload,
   setAccessToken,
   clearAccessToken,
   hasAccessToken,

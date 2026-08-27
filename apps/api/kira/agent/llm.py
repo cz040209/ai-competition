@@ -231,6 +231,15 @@ def _compose_overspend(messages: Sequence[BaseMessage], text: str) -> str:
     return f"{head}\n{sub}"
 
 
+_ASKED = re.compile(r"^\s*(?:please\s+)?remember(?:\s+that)?[,:\s]+", re.I)
+
+
+def _stated(text: str) -> str:
+    """The fact, not the request for it: "Remember that X" is kept as "X"."""
+    fact = _ASKED.sub("", text.strip())
+    return (fact[:1].upper() + fact[1:])[:280] if fact else text.strip()[:280]
+
+
 ROUTES: tuple[Route, ...] = (
     Route(
         "attachment",
@@ -250,7 +259,7 @@ ROUTES: tuple[Route, ...] = (
             "remember": {
                 "kind": "preference",
                 "subject": "stated preference",
-                "fact": text.strip()[:280],
+                "fact": _stated(text),
                 "confidence": 95,
             }
         },

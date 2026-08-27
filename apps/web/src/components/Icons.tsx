@@ -74,3 +74,30 @@ export const IcMic = (p: IconProps) => (
     }
   />
 );
+export const IcImg = (p: IconProps) => (
+  <Svg
+    {...p}
+    d={
+      <>
+        <rect x="3.5" y="5" width="17" height="14" rx="2.6" />
+        <circle cx="9" cy="10" r="1.6" />
+        <path d="m4.5 17 4.6-4.3L13 16l2.6-2.2 3.9 3.4" />
+      </>
+    }
+  />
+);
+export const IcX = (p: IconProps) => <Svg {...p} d={<path d="m6.5 6.5 11 11m0-11-11 11" />} />;
+export const IcStop = (p: IconProps) => (
+  <Svg {...p} d={<rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" />} />
+);
+export const IcTrash = (p: IconProps) => (
+  <Svg
+    {...p}
+    d={
+      <>
+        <path d="M5.5 7.5h13M9.5 7.5V5.8a1.3 1.3 0 0 1 1.3-1.3h2.4a1.3 1.3 0 0 1 1.3 1.3v1.7" />
+        <path d="M7 7.5 7.8 19a1.3 1.3 0 0 0 1.3 1.2h5.8a1.3 1.3 0 0 0 1.3-1.2L17 7.5" />
+      </>
+    }
+  />
+);

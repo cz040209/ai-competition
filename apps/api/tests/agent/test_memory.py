@@ -31,7 +31,16 @@ class TestExtraction:
         result = await say(session, butler, today, "Remember that I split rent with Aida.")
         assert result.approval is not None
         assert result.approval["tool"] == "remember"
+        # The fact, not the request for it.
+        assert result.approval["summary"] == "Remember: I split rent with Aida."
         assert await list_memories(session, butler[0]) == ()
+
+    async def test_a_waiting_proposal_says_nothing_has_happened(
+        self, session, butler, today
+    ):
+        result = await say(session, butler, today, "Remember that I split rent with Aida.")
+        assert result.answer.startswith("Here is the change I would make.")
+        assert "Nothing has happened yet" in result.answer
 
     async def test_a_person_is_kept_as_a_sentence(self, session, butler, today):
         await say(session, butler, today, "I split rent with my housemate every month.")

@@ -24,6 +24,14 @@ from kira.db.models import ButlerThread, User
 ModelFactory = Callable[..., Any]
 
 
+# What Kira says while a proposal is on screen. It is fixed rather than
+# generated: the model never gets to soften the fact that nothing has happened.
+PROPOSAL_LEAD = (
+    "Here is the change I would make.\n"
+    "Nothing has happened yet — it is yours to approve, edit or reject."
+)
+
+
 @dataclass(slots=True)
 class TurnResult:
     """What one turn produced, whether or not anyone was watching it stream."""
@@ -71,7 +79,7 @@ async def _result(graph, config) -> TurnResult:
     interrupts = getattr(state, "interrupts", ()) or ()
     approval = dict(interrupts[0].value) if interrupts else None
     return TurnResult(
-        answer=values.get("answer", ""),
+        answer=values.get("answer") or (PROPOSAL_LEAD if approval else ""),
         evidence=list(values.get("evidence") or []),
         tools_used=list(values.get("tools_used") or []),
         approval=approval,

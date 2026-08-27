@@ -16,4 +16,7 @@ class ImmediateIntersectionObserver {
 
 beforeEach(() => {
   vi.stubGlobal("IntersectionObserver", ImmediateIntersectionObserver);
+  // jsdom implements neither, and both are decoration rather than behaviour.
+  Element.prototype.scrollIntoView = vi.fn();
+  Element.prototype.scrollTo = vi.fn();
 });

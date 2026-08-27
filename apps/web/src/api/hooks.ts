@@ -1,4 +1,13 @@
-import type { Activity, DashboardToday, TokenResponse, Transaction } from "@kira/contracts";
+import type {
+  Activity,
+  ButlerThread,
+  Capture,
+  CaptureAvailability,
+  DashboardToday,
+  Memory,
+  TokenResponse,
+  Transaction,
+} from "@kira/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "./client";
@@ -60,6 +69,84 @@ export function useUnconfirm() {
   return useSettle("unconfirm");
 }
 
+export const butlerThreadKey = ["butler", "thread"] as const;
+export const memoriesKey = ["butler", "memories"] as const;
+
+export function useButlerThread(enabled: boolean) {
+  return useQuery({
+    queryKey: butlerThreadKey,
+    queryFn: () => api.get<ButlerThread>("/v1/butler/thread"),
+    enabled,
+  });
+}
+
+export function useMemories(enabled: boolean) {
+  return useQuery({
+    queryKey: memoriesKey,
+    queryFn: () => api.get<Memory[]>("/v1/butler/memories"),
+    enabled,
+  });
+}
+
+export function useCorrectMemory() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, fact }: { id: string; fact: string }) =>
+      api.patch<Memory>(`/v1/butler/memories/${id}`, { fact }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: memoriesKey }),
+  });
+}
+
+export function useForgetMemory() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.delete<void>(`/v1/butler/memories/${id}`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: memoriesKey }),
+  });
+}
+
+/** Whether the camera and microphone affordances should be offered at all. */
+export function useCaptureAvailability(enabled: boolean) {
+  return useQuery({
+    queryKey: ["capture"],
+    queryFn: () => api.get<CaptureAvailability>("/v1/capture"),
+    enabled,
+    staleTime: Infinity,
+  });
+}
+
+export function useReadCapture(kind: "receipt" | "voice") {
+  return useMutation({
+    mutationFn: (file: Blob) => {
+      const form = new FormData();
+      form.append(kind === "receipt" ? "image" : "audio", file, `capture.${kind}`);
+      return api.upload<Capture>(`/v1/capture/${kind}`, form);
+    },
+  });
+}
+
+/** Save what was read. It becomes a draft, which is not yet the ledger. */
+export function useCreateDraft() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (draft: {
+      merchant: string;
+      amount_sen: number;
+      occurred_on: string;
+      category?: string;
+      source?: string;
+      confidence?: number | null;
+      note?: string;
+    }) => api.post<Transaction>("/v1/transactions", draft),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: activityKey }),
+        queryClient.invalidateQueries({ queryKey: dashboardTodayKey }),
+      ]);
+    },
+  });
+}
+
 export function useLogin() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -69,6 +156,7 @@ export function useLogin() {
       api.setAccessToken(token.access_token);
       void queryClient.invalidateQueries({ queryKey: dashboardTodayKey });
       void queryClient.invalidateQueries({ queryKey: activityKey });
+      void queryClient.invalidateQueries({ queryKey: butlerThreadKey });
     },
   });
 }

@@ -368,3 +368,41 @@ beat this work cannot complete on its own.
 New write services for goals and commitments are built here, since the Butler needs
 something to control. They are ordinary services in `kira/services/` and the eventual
 Plan screen will consume the same functions.
+
+## 16. Space left for voice and camera
+
+Added after review, at the product owner's request. The requirement is that
+speaking to Kira and showing her a receipt are first-class inputs, not
+retrofits — so the seam is built now and the providers arrive later.
+
+**Nothing here writes.** A machine read is a proposal. `POST /v1/capture/receipt`
+and `POST /v1/capture/voice` take bytes, return fields with a confidence on each,
+and touch no table. Turning one into a draft is a separate, explicit
+`POST /v1/transactions`; turning a draft into ledger truth is still the user
+confirming it. The rule that a read amount is never a fact is enforced in one
+place, `create_transaction`, rather than at each caller.
+
+**The providers are already abstracted.** `OcrAdapter.read_receipt` and
+`VoiceAdapter.transcribe` exist in `kira/adapters/protocols.py` and are wired to
+the deterministic fakes. `kira/services/capture.py` is the only consumer.
+Swapping in a real vendor is a change to `registry.py` and nothing else — the
+API, the agent, the tools and the UI do not know which one is behind it.
+
+**The Butler sees a capture as an attachment on the turn.** `ButlerAskRequest`
+carries it, `ToolContext.attachment` exposes it, and `inspect_attachment` — an
+ordinary read tool in `kira/agent/tools/capture.py` — returns the read fields as
+evidence rows, including the row that says it is not on the ledger. The turn is
+persisted with its attachment, so the thread shows what was shown.
+
+**The UI captures for real.** `ScanSheet` uses `capture="environment"`, which
+opens the rear camera on a phone and degrades to the file picker on a desktop.
+`VoiceSheet` uses `getUserMedia` and `MediaRecorder`, with a live waveform driven
+by an `AnalyserNode` rather than an animation loop pretending to listen. Where
+the browser refuses the microphone the sheet says so and offers the sample; a
+dead affordance is worse than none, which is also why `GET /v1/capture` tells the
+client what to offer.
+
+**What is deliberately not built.** Streaming speech-to-text, on-device
+transcription, receipt line-item extraction, and correcting a doubtful word by
+tapping it. Each is a change behind the adapter or inside one sheet, and none of
+them moves the boundary this document is about.

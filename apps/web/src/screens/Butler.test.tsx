@@ -1,0 +1,253 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import type { ButlerThread } from "@kira/contracts";
+
+import { Butler } from "./Butler";
+
+const EMPTY_THREAD: ButlerThread = {
+  id: "t1",
+  title: "Butler",
+  messages: [],
+  pending_approvals: [],
+};
+
+/** One SSE body, framed exactly as the server frames it. */
+function sse(...events: object[]): string {
+  return events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("");
+}
+
+/** A stream a test can feed frame by frame, to observe the turn mid-flight. */
+function controlled(): { response: Response; push: (event: object) => void; close: () => void } {
+  const encoder = new TextEncoder();
+  let controller: ReadableStreamDefaultController<Uint8Array>;
+  const response = {
+    ok: true,
+    status: 200,
+    body: new ReadableStream<Uint8Array>({
+      start(c) {
+        controller = c;
+      },
+    }),
+  } as unknown as Response;
+  return {
+    response,
+    push: (event) => controller.enqueue(encoder.encode(sse(event))),
+    close: () => controller.close(),
+  };
+}
+
+function streamed(body: string): Response {
+  const encoder = new TextEncoder();
+  return {
+    ok: true,
+    status: 200,
+    body: new ReadableStream({
+      start(controller) {
+        // Two chunks, split mid-frame, so the reader's buffering is exercised.
+        const bytes = encoder.encode(body);
+        const half = Math.floor(bytes.length / 2);
+        controller.enqueue(bytes.slice(0, half));
+        controller.enqueue(bytes.slice(half));
+        controller.close();
+      },
+    }),
+  } as unknown as Response;
+}
+
+const ANSWER = sse(
+  { type: "message", id: "m1", role: "user" },
+  { type: "thinking", text: "Reading your accounts" },
+  { type: "tool", tool: "calculate_safe_to_spend", module: "dashboard", label: "Checking what today can take" },
+  { type: "evidence", rows: [["Safe to spend today", "RM52.97"]] },
+  { type: "token", text: "Yes — RM20 for lunch leaves you RM32.97 today.\n" },
+  { type: "token", text: "Bills and your buffer were set aside first." },
+  {
+    type: "done",
+    answer: "Yes — RM20 for lunch leaves you RM32.97 today.\nBills and your buffer were set aside first.",
+    evidence: [["Safe to spend today", "RM52.97"], ["Lunch", "RM20.00"]],
+    tools_used: ["calculate_safe_to_spend"],
+    approval: null,
+  },
+);
+
+const PROPOSAL = sse(
+  { type: "message", id: "m2", role: "user" },
+  {
+    type: "approval",
+    approval_id: "a1",
+    tool: "remember",
+    module: "memory",
+    summary: "Remember: I split rent with Aida.",
+    args: {},
+  },
+  {
+    type: "done",
+    answer: "Noted — I will hold on to that.",
+    evidence: [],
+    tools_used: [],
+    approval: { approval_id: "a1", summary: "Remember: I split rent with Aida." },
+  },
+);
+
+function setup(thread: ButlerThread | undefined = EMPTY_THREAD) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={client}>
+      <Butler thread={thread} isLoading={false} />
+    </QueryClientProvider>,
+  );
+  return userEvent.setup();
+}
+
+describe("Butler", () => {
+  beforeEach(() => {
+    // A fresh Response per call: a stream can only be read once.
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(streamed(ANSWER))));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("says what it will and will not do before anything is asked", () => {
+    setup();
+    expect(screen.getByText(/move money/)).toBeInTheDocument();
+    expect(screen.getByText(/I show you the numbers I used/)).toBeInTheDocument();
+  });
+
+  it("offers the demo questions as starting points", () => {
+    setup();
+    expect(screen.getByRole("button", { name: "Why did safe-to-spend drop?" })).toBeInTheDocument();
+  });
+
+  it("shows the question, then the streamed answer", async () => {
+    const user = setup();
+    await user.type(screen.getByLabelText("Ask Kira"), "Can I afford RM20 lunch?{Enter}");
+
+    expect(screen.getByText("Can I afford RM20 lunch?")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByText(/Yes — RM20 for lunch/)).toBeInTheDocument(),
+    );
+    expect(screen.getByText(/Bills and your buffer were set aside first/)).toBeInTheDocument();
+  });
+
+  it("renders the evidence the tools returned", async () => {
+    const user = setup();
+    await user.click(screen.getByRole("button", { name: "Why did safe-to-spend drop?" }));
+
+    await waitFor(() => expect(screen.getByText("What I used")).toBeInTheDocument());
+    expect(screen.getByText("Safe to spend today")).toBeInTheDocument();
+    expect(screen.getByText("RM52.97")).toBeInTheDocument();
+  });
+
+  it("names the tool it is running while it runs", async () => {
+    const { response, push, close } = controlled();
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(response)));
+    const user = setup();
+
+    await user.click(screen.getByRole("button", { name: "What bills are due?" }));
+    push({ type: "tool", tool: "list_commitments", module: "commitments", label: "Reading your bills" });
+    await waitFor(() => expect(screen.getByText("Reading your bills")).toBeInTheDocument());
+
+    push({ type: "done", answer: "Rent is next.", evidence: [], tools_used: [], approval: null });
+    close();
+    await waitFor(() => expect(screen.getByText("Rent is next.")).toBeInTheDocument());
+    expect(screen.queryByText("Reading your bills")).not.toBeInTheDocument();
+  });
+
+  it("does not send an empty question", async () => {
+    const user = setup();
+    await user.click(screen.getByLabelText("Send"));
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("replays the thread it was given", () => {
+    setup({
+      ...EMPTY_THREAD,
+      messages: [
+        {
+          id: "m0",
+          role: "user",
+          content: "Where do I stand?",
+          evidence: [],
+          attachment: null,
+          created_at: "2026-09-03T04:00:00Z",
+        },
+        {
+          id: "m1",
+          role: "kira",
+          content: "You have RM52.97 safe to spend today.",
+          evidence: [["Balance", "RM4,180.40"]],
+          attachment: null,
+          created_at: "2026-09-03T04:00:01Z",
+        },
+      ],
+    });
+    expect(screen.getByText("Where do I stand?")).toBeInTheDocument();
+    expect(screen.getByText("RM4,180.40")).toBeInTheDocument();
+  });
+});
+
+describe("Butler approvals", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(streamed(PROPOSAL))));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("shows a proposed change as not yet applied", async () => {
+    const user = setup();
+    await user.type(screen.getByLabelText("Ask Kira"), "Remember that{Enter}");
+
+    await waitFor(() =>
+      expect(screen.getByText("Proposed change · not applied")).toBeInTheDocument(),
+    );
+    expect(screen.getByText("Remember: I split rent with Aida.")).toBeInTheDocument();
+    expect(screen.getByText(/Nothing changes until you approve/)).toBeInTheDocument();
+  });
+
+  it("sends the decision when the change is approved", async () => {
+    const user = setup();
+    await user.type(screen.getByLabelText("Ask Kira"), "Remember that{Enter}");
+    await waitFor(() => screen.getByRole("button", { name: "Approve" }));
+
+    await user.click(screen.getByRole("button", { name: "Approve" }));
+    await waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith(
+        "/v1/butler/approvals/a1/respond",
+        expect.objectContaining({ method: "POST" }),
+      ),
+    );
+  });
+
+  it("clears the card when the change is rejected", async () => {
+    const settled = sse({
+      type: "done",
+      answer: "Rejected. Nothing changed.",
+      evidence: [],
+      tools_used: [],
+      approval: null,
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(streamed(PROPOSAL))
+        .mockResolvedValue(streamed(settled)),
+    );
+    const user = setup();
+    await user.type(screen.getByLabelText("Ask Kira"), "Remember that{Enter}");
+    await waitFor(() => screen.getByRole("button", { name: "Reject" }));
+
+    await user.click(screen.getByRole("button", { name: "Reject" }));
+    await waitFor(() =>
+      expect(screen.getByText("Rejected. Nothing changed.")).toBeInTheDocument(),
+    );
+    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+  });
+});

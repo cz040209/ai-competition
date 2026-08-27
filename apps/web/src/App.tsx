@@ -2,9 +2,11 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 
 import {
   useActivity,
+  useButlerThread,
   useConfirmDraft,
   useDashboardToday,
   useDiscardDraft,
+  useMemories,
   useUnconfirm,
 } from "./api/hooks";
 import { IcActivity, IcMore, IcPlan, IcSpark, IcToday } from "./components/Icons";
@@ -13,7 +15,9 @@ import { NavItem } from "./components/NavItem";
 import { ScrollContext } from "./components/Reveal";
 import { SheetHostContext } from "./components/Sheet";
 import { Activity } from "./screens/Activity";
+import { Butler } from "./screens/Butler";
 import { Login } from "./screens/Login";
+import { More } from "./screens/More";
 import { Placeholder } from "./screens/Placeholder";
 import { Today } from "./screens/Today";
 
@@ -31,6 +35,10 @@ export function App() {
   const dashboard = useDashboardToday(signedIn);
   const [category, setCategory] = useState<string | null>(null);
   const activity = useActivity(signedIn && tab === "activity", category);
+  // The thread is fetched once the user signs in, not on first open: the
+  // Butler tab should already have its history when it appears.
+  const butler = useButlerThread(signedIn);
+  const memories = useMemories(signedIn && tab === "more");
   const confirm = useConfirmDraft();
   const discard = useDiscardDraft();
   const unconfirm = useUnconfirm();
@@ -143,21 +151,13 @@ export function App() {
                     />
                   )}
                   {signedIn && tab === "butler" && (
-                    <Placeholder
-                      title="Butler"
-                      blurb="Ask about affordability, why a number moved, or how to recover an overspend. Every answer shows its working."
-                      week="7"
-                    />
+                    <Butler thread={butler.data} isLoading={butler.isLoading} />
                   )}
                   {signedIn && tab === "plan" && (
                     <Placeholder title="Plan" blurb="Goals, scenarios, and the day planner." week="3" />
                   )}
                   {signedIn && tab === "more" && (
-                    <Placeholder
-                      title="More"
-                      blurb="Bills, accounts, and the safety and audit trail."
-                      week="2"
-                    />
+                    <More memories={memories.data} isLoading={memories.isLoading} />
                   )}
                 </div>
               </div>
