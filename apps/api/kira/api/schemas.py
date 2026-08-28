@@ -60,6 +60,46 @@ class GoalSummaryResponse(ResponseModel):
     note: str
 
 
+class PlaceResponse(ResponseModel):
+    id: str
+    name: str
+    kind: str
+    km: float
+    travel_sen: int
+    minutes: int
+    total_sen: int
+    # Null on a day with no room left, so no client can turn a stand-in ratio
+    # into a percentage or divide its way back to a room that is not there.
+    share: float | None
+    band: Literal["ok", "tight", "over"]
+    confidence: str
+    halal: bool
+    note: str
+
+
+class DayPlanResponse(ResponseModel):
+    """The places, and the figures they were judged against.
+
+    ``room_sen`` is stated rather than left to be inferred from ``share``: it
+    is zero on a day already spent out, and a client dividing to recover it
+    would turn that zero into a number the user never had.
+
+    ``nearby_count`` is how many places the radius held before the halal and
+    cap filters ran, and ``matching_count`` how many were still standing after
+    the halal filter but before the ceiling. Without both, an empty ``places``
+    is unreadable: a client would have to guess which of three causes emptied
+    it, and would blame the ceiling for a distance no ceiling can close or for
+    a halal toggle no ceiling can reach. The counts nest, so the first of them
+    that is nil is the cause.
+    """
+
+    room_sen: int
+    cap_sen: int
+    nearby_count: int
+    matching_count: int
+    places: list[PlaceResponse]
+
+
 class DashboardTodayResponse(ResponseModel):
     date: date
     display_name: str

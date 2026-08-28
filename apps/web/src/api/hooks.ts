@@ -4,6 +4,7 @@ import type {
   Capture,
   CaptureAvailability,
   DashboardToday,
+  DayPlan,
   Memory,
   TokenResponse,
   Transaction,
@@ -37,6 +38,53 @@ export function useActivity(enabled: boolean, category: string | null = null) {
     // The chips are the same on every filtered response, so the previous
     // ledger stays put while the next one loads instead of flashing empty.
     placeholderData: (previous) => previous,
+  });
+}
+
+export type DayPlanParams = {
+  lat: number;
+  lng: number;
+  mode: "walk" | "transit" | "ride";
+  halalOnly: boolean;
+  capSen?: number;
+};
+
+type DayPlanKey = readonly ["day-plan", DayPlanParams];
+
+/** The ceiling only decides which of the same places are shown. Everything else
+ *  in the search decides what the places are, how far away they are, and what
+ *  they cost — so a previous answer may outlive a change of ceiling and nothing
+ *  else. */
+function sameSearch(before: DayPlanParams, now: DayPlanParams): boolean {
+  return (
+    before.lat === now.lat &&
+    before.lng === now.lng &&
+    before.mode === now.mode &&
+    before.halalOnly === now.halalOnly
+  );
+}
+
+export function useDayPlan(params: DayPlanParams) {
+  const query = new URLSearchParams({
+    lat: String(params.lat),
+    lng: String(params.lng),
+    mode: params.mode,
+    halal_only: String(params.halalOnly),
+    ...(params.capSen !== undefined ? { cap_sen: String(params.capSen) } : {}),
+  });
+  return useQuery({
+    queryKey: ["day-plan", params] as DayPlanKey,
+    queryFn: () => api.get<DayPlan>("/v1/day-plan/places?" + query),
+    // The ceiling slider is part of this query's own key, so without this the
+    // control unmounts into the loading state on its first step and the drag is
+    // over before it began. Held across a change of origin or mode, though, the
+    // same trick would put the old answer under the new question: distances and
+    // fares measured from KLCC, sitting under a header that has already started
+    // saying "Near you". Waiting is honest; that is not.
+    placeholderData: (previous, previousQuery) => {
+      const before = (previousQuery?.queryKey as DayPlanKey | undefined)?.[1];
+      return before && sameSearch(before, params) ? previous : undefined;
+    },
   });
 }
 

@@ -1,0 +1,514 @@
+import { useContext, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
+
+import type { Place } from "@kira/contracts";
+
+import { useDayPlan } from "../api/hooks";
+import { IcCheck } from "../components/Icons";
+import { Odometer } from "../components/Odometer";
+import { Reveal } from "../components/Reveal";
+import { Sheet, SheetHostContext } from "../components/Sheet";
+import { fmt } from "../lib/money";
+
+// No location yet beats a silent wrong one, so this is where distances and
+// travel costs are measured from until the user grants their own.
+const KLCC = { lat: 3.1577, lng: 101.712 };
+
+type Mode = "walk" | "transit" | "ride";
+
+const MODES: { id: Mode; label: string }[] = [
+  { id: "walk", label: "Walk" },
+  { id: "transit", label: "LRT" },
+  { id: "ride", label: "Grab" },
+];
+
+const MIN_CAP_SEN = 500;
+const CAP_STEP_SEN = 50;
+
+type LocFailure = "unsupported" | "blocked" | "unavailable" | "timeout";
+type LocState = "idle" | "asking" | "ok" | LocFailure;
+
+// A failed locate that leaves the chip reading exactly as it did before the tap
+// is indistinguishable from never having tapped, so each reason gets its own
+// label and its own advice: a blocked permission needs the browser's settings
+// changed, where a timeout is only worth another tap.
+const LOC_FAILURES: Record<LocFailure, { chip: string; reason: string; advice: string }> = {
+  unsupported: {
+    chip: "Location unavailable",
+    reason: "This browser will not give me your location",
+    advice: "",
+  },
+  blocked: {
+    chip: "Location blocked",
+    reason: "Location is blocked for this site",
+    advice: "Allow it in your browser settings, then tap again.",
+  },
+  unavailable: {
+    chip: "Location unavailable",
+    reason: "Your device couldn't fix a position",
+    advice: "Tap again to retry.",
+  },
+  timeout: {
+    chip: "Location timed out",
+    reason: "Locating took longer than 8 seconds",
+    advice: "Tap again to retry.",
+  },
+};
+
+function isLocFailure(state: LocState): state is LocFailure {
+  return Object.hasOwn(LOC_FAILURES, state);
+}
+
+// GeolocationPositionError codes: 1 PERMISSION_DENIED, 2 POSITION_UNAVAILABLE,
+// 3 TIMEOUT. Anything else is a browser inventing a code, and "unavailable" is
+// the one reading that promises the user nothing.
+function failureFor(code: number): LocFailure {
+  return code === 1 ? "blocked" : code === 3 ? "timeout" : "unavailable";
+}
+
+function formatKm(km: number): string {
+  return km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`;
+}
+
+function Toast({ message }: { message: string }) {
+  return (
+    <div className="toast" role="status">
+      <span className="tick">
+        <IcCheck size={17} />
+      </span>
+      <span style={{ lineHeight: 1.35 }}>{message}</span>
+    </div>
+  );
+}
+
+type DetailSheetProps = {
+  place: Place;
+  modeLabel: string;
+  roomSen: number;
+  onClose: () => void;
+  onAdd: (place: Place) => void;
+};
+
+function DetailSheet({ place, modeLabel, roomSen, onClose, onAdd }: DetailSheetProps) {
+  const mealSen = place.total_sen - place.travel_sen;
+  const rows: [string, string][] = [
+    ["Meal estimate", `RM${fmt(mealSen)}`],
+    ["Travel", place.travel_sen > 0 ? `RM${fmt(place.travel_sen)} · ${modeLabel}` : "Free · on foot"],
+    ["Total outing", `RM${fmt(place.total_sen)}`],
+    ["Distance", formatKm(place.km)],
+    ["Confidence", `Estimate · ${place.confidence}`],
+  ];
+
+  const overSen = place.total_sen - roomSen;
+
+  return (
+    <Sheet label={place.name} onClose={onClose}>
+      <div className="grab" />
+      <div className="sheet-head">
+        <div>
+          <p className="eyebrow on-ink" style={{ margin: 0 }}>
+            {place.kind} · {modeLabel}
+          </p>
+          <h2 style={{ margin: "5px 0 0", fontSize: 20, fontWeight: 800, letterSpacing: "-.03em" }}>
+            {place.name}
+          </h2>
+        </div>
+        <div className="money" style={{ fontSize: 22 }}>RM{fmt(place.total_sen)}</div>
+      </div>
+
+      <p className="voice" style={{ margin: 0, fontSize: 16, lineHeight: 1.45, color: "#F1F4F0" }}>
+        {place.band === "ok" &&
+          "Comfortable. This leaves most of today's room for whatever else comes up."}
+        {place.band === "tight" && place.share !== null &&
+          `This works, but it uses ${Math.round(place.share * 100)}% of today's room. The rest of today would need to stay light.`}
+        {place.band === "over" &&
+          (roomSen > 0
+            ? `This is RM${fmt(overSen)} over today's room. I'd have to propose a recovery scenario, and you'd have to approve it.`
+            : "Today's room is already spent, so all of this would be borrowed from the days ahead.")}
+      </p>
+
+      <div className="evidence" style={{ marginTop: 16 }}>
+        <span className="eyebrow on-ink" style={{ marginBottom: 2 }}>Cost breakdown</span>
+        {rows.map(([label, value]) => (
+          <div className="ev-row" key={label}>
+            <span>{label}</span>
+            <b>{value}</b>
+          </div>
+        ))}
+      </div>
+
+      {place.note && (
+        <p style={{ fontSize: 12, color: "rgba(233,237,233,.55)", lineHeight: 1.5, margin: "14px 0 0" }}>
+          {place.note}
+        </p>
+      )}
+
+      <div style={{ display: "flex", gap: 9, marginTop: 18 }}>
+        <button className="btn btn-line btn-sm" style={{ flex: 1 }} onClick={onClose}>
+          Close
+        </button>
+        <button className="btn btn-brass btn-sm" style={{ flex: 1 }} onClick={() => onAdd(place)}>
+          Add to today
+        </button>
+      </div>
+    </Sheet>
+  );
+}
+
+/**
+ * Self-contained on purpose: mode, halal, the spend ceiling, and geolocation
+ * are a bigger filter surface than Today or Activity carry, and nothing else
+ * in the app needs to share this state.
+ */
+export function DayPlan() {
+  const [mode, setMode] = useState<Mode>("walk");
+  const [halalOnly, setHalalOnly] = useState(true);
+  const [capSen, setCapSen] = useState<number | undefined>(undefined);
+  const [origin, setOrigin] = useState({ ...KLCC, real: false });
+  const [locState, setLocState] = useState<LocState>("idle");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const sheetHost = useContext(SheetHostContext);
+
+  const { data, isLoading, isError } = useDayPlan({
+    lat: origin.lat,
+    lng: origin.lng,
+    mode,
+    halalOnly,
+    capSen,
+  });
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 3400);
+    return () => clearTimeout(timer);
+  }, [toast]);
+
+  const useMyLocation = () => {
+    if (!navigator.geolocation) {
+      setLocState("unsupported");
+      return;
+    }
+    setLocState("asking");
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setOrigin({ lat: position.coords.latitude, lng: position.coords.longitude, real: true });
+        setLocState("ok");
+      },
+      (error) => setLocState(failureFor(error.code)),
+      { timeout: 8000, maximumAge: 60000 },
+    );
+  };
+
+  // The chip and the "Near you" header both read off the origin, so falling
+  // back has to clear the located state too or one of them would still claim
+  // a location that is no longer being planned from.
+  const planFromKlcc = () => {
+    setOrigin({ ...KLCC, real: false });
+    setLocState("idle");
+  };
+
+  // A wrong number is worse than no number, so neither state guesses.
+  if (isLoading || !data) {
+    return (
+      <div className="pad" style={{ paddingTop: 90 }}>
+        <p className="voice" style={{ fontSize: 17 }}>
+          {isError ? "I couldn't find places just now." : "Finding what fits today…"}
+        </p>
+        {isError && (
+          <p style={{ fontSize: 13, color: "var(--muted)" }}>
+            Nothing has changed on your ledger. Try again in a moment.
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  const results = [...data.places].sort((a, b) => a.total_sen - b.total_sen);
+  // Both figures are the server's own, never inferred here: on a day already
+  // spent out the room is nil, and dividing to recover it would invent one.
+  const roomSen = data.room_sen;
+  const sliderValue = capSen ?? data.cap_sen;
+  // A range input clamps a value outside its bounds without saying so, leaving
+  // the knob somewhere the figure beside it does not read. So the bounds widen
+  // to hold the value instead: down to nil on a spent-out day, and off the room
+  // rather than off the value, which would double the scale away under a finger
+  // dragging to the top.
+  const minCapSen = Math.min(MIN_CAP_SEN, sliderValue);
+  const maxCapSen = Math.max(roomSen * 2, sliderValue, 6000);
+  // A ceiling of nil sitting inside a room of nil is arithmetic, not comfort.
+  const capVerdict =
+    roomSen === 0
+      ? { ok: false, label: "Nothing left in today's room" }
+      : sliderValue > roomSen
+        ? { ok: false, label: "Above today's room" }
+        : { ok: true, label: "Inside today's room" };
+  // Stated by the server, never inferred: with the list empty the ceiling is
+  // the obvious culprit and the wrong one whenever nothing was in range at all,
+  // or whenever the halal filter took out everything that was. The counts nest,
+  // so the first one that is nil is the cause.
+  const outOfRange = data.nearby_count === 0;
+  const filteredOut = !outOfRange && data.matching_count === 0;
+  const nearbyCount = data.nearby_count;
+  const modeLabel = MODES.find((candidate) => candidate.id === mode)?.label ?? mode;
+  const selected = results.find((place) => place.id === selectedId) ?? null;
+
+  const addToToday = (place: Place) => {
+    setSelectedId(null);
+    setToast(`${place.name} added to today. RM${fmt(place.total_sen)} pencilled in.`);
+  };
+
+  return (
+    <>
+      <div className="topbar">
+        <div>
+          <p className="eyebrow" style={{ margin: 0 }}>Near {origin.real ? "you" : "KLCC"}</p>
+          <h1>What today&apos;s money can buy</h1>
+        </div>
+      </div>
+
+      <div className="pad">
+        <Reveal>
+          <section className="capbar">
+            <div className="cap-row">
+              <div>
+                <p className="eyebrow on-ink" style={{ margin: 0 }}>Spending ceiling</p>
+                <div style={{ marginTop: 9 }}>
+                  <Odometer sen={sliderValue} size={34} />
+                </div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <p className="eyebrow on-ink" style={{ margin: 0 }}>Room today</p>
+                <div className="money" style={{ fontSize: 17, color: "#EDF1ED", marginTop: 7 }}>
+                  RM{fmt(roomSen)}
+                </div>
+              </div>
+            </div>
+
+            <input
+              className="slider"
+              type="range"
+              min={minCapSen}
+              max={maxCapSen}
+              step={CAP_STEP_SEN}
+              value={sliderValue}
+              // The API takes a ceiling above zero, so dragging to the floor
+              // asks for RM5 rather than for nothing at all.
+              onChange={(event) => setCapSen(Math.max(Number(event.target.value), MIN_CAP_SEN))}
+              aria-label="Spending ceiling"
+            />
+            <div className="cap-ticks">
+              <span>RM{fmt(minCapSen)}</span>
+              <span style={{ color: capVerdict.ok ? "var(--brass-lit)" : "var(--clay)" }}>
+                {capVerdict.label}
+              </span>
+              <span>RM{fmt(maxCapSen)}</span>
+            </div>
+
+            <p className="voice" style={{ margin: "15px 0 0", fontSize: 14.5, color: "rgba(233,237,233,.78)" }}>
+              {results.length === 0
+                ? outOfRange
+                  ? "Distance is what is in the way here, not the ceiling."
+                  : filteredOut
+                    ? "The halal filter is what is in the way here, not the ceiling."
+                    : "Nothing fits that ceiling yet. Drag it up and I'll show you what appears."
+                : `${results.length} place${results.length > 1 ? "s" : ""} fit, ${modeLabel.toLowerCase()} from ${origin.real ? "where you are" : "KLCC"}. The price on each place is the whole outing — meal and travel together.`}
+            </p>
+          </section>
+        </Reveal>
+
+        <Reveal delay={50} style={{ marginTop: 14 }}>
+          <div className="filters">
+            {MODES.map((candidate) => (
+              <button
+                key={candidate.id}
+                type="button"
+                className={`fchip ${mode === candidate.id ? "on" : ""}`}
+                onClick={() => setMode(candidate.id)}
+              >
+                {candidate.label}
+              </button>
+            ))}
+            <button
+              type="button"
+              className={`fchip ${halalOnly ? "on" : ""}`}
+              onClick={() => setHalalOnly((current) => !current)}
+            >
+              Halal
+            </button>
+            <button
+              type="button"
+              className={`fchip ${locState === "ok" ? "on" : ""}`}
+              onClick={useMyLocation}
+              disabled={locState === "asking"}
+            >
+              {locState === "asking"
+                ? "Locating…"
+                : locState === "ok"
+                  ? "Located"
+                  : isLocFailure(locState)
+                    ? LOC_FAILURES[locState].chip
+                    : "Use my location"}
+            </button>
+          </div>
+          {isLocFailure(locState) && (
+            <p
+              role="status"
+              style={{
+                margin: "10px 0 0",
+                fontSize: 12,
+                color: "var(--muted)",
+                lineHeight: 1.5,
+              }}
+            >
+              {/* Named from the origin actually in use: a locate that fails on
+                  a second tap leaves the first one's position standing, and
+                  claiming KLCC there would be the same silent lie again. */}
+              {LOC_FAILURES[locState].reason},{" "}
+              {origin.real
+                ? "so I'm still planning from where I last found you."
+                : "so I'm planning from KLCC."}{" "}
+              {LOC_FAILURES[locState].advice}
+            </p>
+          )}
+        </Reveal>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 18 }}>
+          {results.map((place, index) => (
+            <Reveal key={place.id} delay={index * 70}>
+              <button
+                type="button"
+                className={`place ${selectedId === place.id ? "sel" : ""}`}
+                onClick={() => setSelectedId(place.id)}
+              >
+                <span className="place-rank">{index + 1}</span>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                    <b style={{ fontSize: 15, letterSpacing: "-.02em" }}>{place.name}</b>
+                    {index === 0 && <span className="badge badge-best">Best fit</span>}
+                    {place.band === "over" && <span className="badge badge-over">Over</span>}
+                  </span>
+                  <span style={{ display: "block", fontSize: 12, color: "var(--muted)", marginTop: 3 }}>
+                    {place.kind} · {formatKm(place.km)} · {place.minutes} min
+                  </span>
+                  <span
+                    style={{
+                      display: "block",
+                      fontSize: 12,
+                      marginTop: 3,
+                      color:
+                        place.band === "over"
+                          ? "var(--clay)"
+                          : place.band === "tight"
+                            ? "var(--brass)"
+                            : "var(--muted)",
+                    }}
+                  >
+                    {place.share !== null
+                      ? `${Math.round(place.share * 100)}% of today's room`
+                      : "Nothing left in today's room"}
+                    {place.travel_sen > 0 && ` · incl. RM${fmt(place.travel_sen)} travel`}
+                  </span>
+                </span>
+                <span style={{ textAlign: "right", flex: "none" }}>
+                  <span className="money" style={{ fontSize: 18, display: "block" }}>
+                    RM{fmt(place.total_sen)}
+                  </span>
+                  <span className="tag" style={{ color: "var(--brass)" }}>Est · {place.confidence}</span>
+                </span>
+              </button>
+            </Reveal>
+          ))}
+
+          {results.length === 0 && (
+            <Reveal>
+              <div className="card-flat empty-map">
+                {/* Three empty lists that look identical on screen, and only the
+                    server's two counts tell them apart: a ceiling the user can
+                    move, a filter the user can switch off, or a distance no
+                    ceiling and no toggle will ever close. */}
+                {outOfRange ? (
+                  <>
+                    <p className="voice" style={{ margin: 0, fontSize: 16 }}>
+                      Nothing within range of here.
+                    </p>
+                    <p style={{ margin: "8px 0 0", fontSize: 13, color: "var(--muted)", lineHeight: 1.5 }}>
+                      The demo set only covers central KL, so raising the ceiling will not fill this
+                      list from where you are.
+                    </p>
+                    {origin.real && (
+                      <button
+                        type="button"
+                        className="btn btn-line btn-sm"
+                        style={{ marginTop: 12 }}
+                        onClick={planFromKlcc}
+                      >
+                        Plan from KLCC instead
+                      </button>
+                    )}
+                  </>
+                ) : filteredOut ? (
+                  <>
+                    <p className="voice" style={{ margin: 0, fontSize: 16 }}>
+                      {nearbyCount === 1
+                        ? "The one place within range of here is not halal."
+                        : `None of the ${nearbyCount} places within range of here are halal.`}
+                    </p>
+                    <p style={{ margin: "8px 0 0", fontSize: 13, color: "var(--muted)", lineHeight: 1.5 }}>
+                      {/* The ceiling is the wrong thing to reach for here: it is
+                          not what emptied this list, and dragging it does nothing. */}
+                      Raising the ceiling will not change that. Turn Halal off to see what is
+                      there, or plan from somewhere else.
+                    </p>
+                    <button
+                      type="button"
+                      className="btn btn-line btn-sm"
+                      style={{ marginTop: 12 }}
+                      onClick={() => setHalalOnly(false)}
+                    >
+                      Turn Halal off
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <p className="voice" style={{ margin: 0, fontSize: 16 }}>
+                      {/* The ceiling this list was filtered by, which trails the
+                          slider while a newly dragged one is still in flight. */}
+                      Nothing under RM{fmt(data.cap_sen)} yet.
+                    </p>
+                    <p style={{ margin: "8px 0 0", fontSize: 13, color: "var(--muted)", lineHeight: 1.5 }}>
+                      Raise the ceiling, walk instead of riding, or eat at home — groceries usually beat
+                      a delivered meal on the same money.
+                    </p>
+                  </>
+                )}
+              </div>
+            </Reveal>
+          )}
+        </div>
+
+        <Reveal delay={60} style={{ marginTop: 16 }}>
+          <p style={{ fontSize: 11.5, color: "var(--muted-2)", lineHeight: 1.5, margin: 0 }}>
+            Prices are estimates from price level and past history, never live menu prices. Places come
+            from a fixed demo set here; in the build they arrive through the Maps adapter.
+          </p>
+        </Reveal>
+      </div>
+
+      {selected && (
+        <DetailSheet
+          place={selected}
+          modeLabel={modeLabel}
+          roomSen={roomSen}
+          onClose={() => setSelectedId(null)}
+          onAdd={addToToday}
+        />
+      )}
+
+      {toast &&
+        (sheetHost?.current ? createPortal(<Toast message={toast} />, sheetHost.current) : (
+          <Toast message={toast} />
+        ))}
+    </>
+  );
+}

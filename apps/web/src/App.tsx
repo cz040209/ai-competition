@@ -16,9 +16,9 @@ import { ScrollContext } from "./components/Reveal";
 import { SheetHostContext } from "./components/Sheet";
 import { Activity } from "./screens/Activity";
 import { Butler } from "./screens/Butler";
+import { DayPlan } from "./screens/DayPlan";
 import { Login } from "./screens/Login";
 import { More } from "./screens/More";
-import { Placeholder } from "./screens/Placeholder";
 import { Today } from "./screens/Today";
 
 export type Tab = "today" | "activity" | "butler" | "plan" | "more";
@@ -153,9 +153,7 @@ export function App() {
                   {signedIn && tab === "butler" && (
                     <Butler thread={butler.data} isLoading={butler.isLoading} />
                   )}
-                  {signedIn && tab === "plan" && (
-                    <Placeholder title="Plan" blurb="Goals, scenarios, and the day planner." week="3" />
-                  )}
+                  {signedIn && tab === "plan" && <DayPlan />}
                   {signedIn && tab === "more" && (
                     <More memories={memories.data} isLoading={memories.isLoading} />
                   )}

@@ -381,6 +381,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/day-plan/places": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Places
+         * @description The cap only filters the list; the room is what every band is judged on.
+         */
+        get: operations["get_places_v1_day_plan_places_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -643,6 +663,34 @@ export interface components {
             /** Goals */
             goals: components["schemas"]["GoalSummaryResponse"][];
         };
+        /**
+         * DayPlanResponse
+         * @description The places, and the figures they were judged against.
+         *
+         *     ``room_sen`` is stated rather than left to be inferred from ``share``: it
+         *     is zero on a day already spent out, and a client dividing to recover it
+         *     would turn that zero into a number the user never had.
+         *
+         *     ``nearby_count`` is how many places the radius held before the halal and
+         *     cap filters ran, and ``matching_count`` how many were still standing after
+         *     the halal filter but before the ceiling. Without both, an empty ``places``
+         *     is unreadable: a client would have to guess which of three causes emptied
+         *     it, and would blame the ceiling for a distance no ceiling can close or for
+         *     a halal toggle no ceiling can reach. The counts nest, so the first of them
+         *     that is nil is the cause.
+         */
+        DayPlanResponse: {
+            /** Room Sen */
+            room_sen: number;
+            /** Cap Sen */
+            cap_sen: number;
+            /** Nearby Count */
+            nearby_count: number;
+            /** Matching Count */
+            matching_count: number;
+            /** Places */
+            places: components["schemas"]["PlaceResponse"][];
+        };
         /** GoalSummaryResponse */
         GoalSummaryResponse: {
             /**
@@ -730,6 +778,36 @@ export interface components {
             days_until: number;
             /** Protected */
             protected: boolean;
+        };
+        /** PlaceResponse */
+        PlaceResponse: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Kind */
+            kind: string;
+            /** Km */
+            km: number;
+            /** Travel Sen */
+            travel_sen: number;
+            /** Minutes */
+            minutes: number;
+            /** Total Sen */
+            total_sen: number;
+            /** Share */
+            share: number | null;
+            /**
+             * Band
+             * @enum {string}
+             */
+            band: "ok" | "tight" | "over";
+            /** Confidence */
+            confidence: string;
+            /** Halal */
+            halal: boolean;
+            /** Note */
+            note: string;
         };
         /** RegisterRequest */
         RegisterRequest: {
@@ -1469,6 +1547,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaptureResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_places_v1_day_plan_places_get: {
+        parameters: {
+            query: {
+                lat: number;
+                lng: number;
+                mode?: "walk" | "transit" | "ride";
+                halal_only?: boolean;
+                cap_sen?: number | null;
+                radius_km?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DayPlanResponse"];
                 };
             };
             /** @description Validation Error */

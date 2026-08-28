@@ -129,6 +129,20 @@ beforeEach(() => {
           headers: { "content-type": "application/json" },
         });
       }
+      if (url.includes("/v1/day-plan/places")) {
+        return new Response(
+          // The counts are what tell the three empty lists apart, so a stub
+          // that leaves them out is a response the API never sends.
+          JSON.stringify({
+            room_sen: 5297,
+            cap_sen: 5297,
+            nearby_count: 0,
+            matching_count: 0,
+            places: [],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
       return new Response("", { status: 404 });
     }),
   );
@@ -207,7 +221,7 @@ describe("App", () => {
     await user.click(await screen.findByRole("button", { name: /sign in/i }));
     await user.click(await screen.findByRole("button", { name: /^Plan$/i }));
 
-    await waitFor(() => expect(screen.getByText(/Coming in week/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/What today's money can buy/i)).toBeInTheDocument());
     expect(screen.getByRole("button", { name: /^Today$/i })).toBeInTheDocument();
   });
 });
