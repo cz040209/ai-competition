@@ -38,12 +38,15 @@ class Snapshot:
     next_payday: date
     cycle_start: date
     cycle_days: int
+    # What lands on each payday. Zero by default, so safe_to_spend and every
+    # golden fixture — none of which look past the next payday — are untouched.
+    income: Money = Money(0)
 
     def __post_init__(self) -> None:
         if self.cycle_days <= 0:
             raise ValueError("cycle_days must be positive")
         currency = self.balance.currency
-        others = [self.buffer, self.spent_today]
+        others = [self.buffer, self.spent_today, self.income]
         others += [c.amount for c in self.commitments]
         others += [g.monthly for g in self.goals]
         for amount in others:
