@@ -175,6 +175,20 @@ existing golden fixtures and `safe_to_spend` continue to pass unchanged. The
 `Goal` model gains a nullable `target_date` column (Alembic migration); a goal
 without one is projected but carries no probability.
 
+**Income.** A projection crossing a payday needs money to arrive, and neither
+`Snapshot` nor `User` carries income today — `safe_to_spend` never needed it,
+because it only ever looks as far as the next payday. `Snapshot` gains
+`income: Money = Money.zero()` and `User` gains a `monthly_income` column.
+Income lands on `next_payday` and every `cycle_days` thereafter. The default of
+zero means every existing golden fixture and `safe_to_spend` itself are
+untouched.
+
+**How a goal is funded in the projection.** On each payday, a goal receives its
+monthly contribution if the balance after that cycle's commitments covers it,
+and otherwise receives what is left. A goal's probability is the share of trials
+in which `saved` reaches `target` on or before `target_date`. This is a model,
+and it is stated on the surface as one.
+
 ### 5.2 Functions
 
 | Function | Contract |
