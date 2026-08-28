@@ -207,7 +207,19 @@ resulting change in goal probability.
 
 2,000 trials × 90 days of integer arithmetic in pure Python is the one number in
 this design nobody can predict from the armchair. **M1 measures it before M2 is
-written.** If a `GET /v1/foresight` cannot answer in under 400 ms, the fallbacks
+written.**
+
+**Measured:** 105 ms at 2,000 trials and 26 ms at 500, over 90 days with two
+goals and five commitments, on the development machine. A single forecast is
+comfortably inside the budget.
+
+**But ranking is not a single forecast.** `drivers()` re-simulates once per
+candidate lever, so eleven candidates cost twelve runs — about 1.3 s at the
+default trial count, which is too slow to serve. Ranking therefore runs at
+`DRIVER_TRIALS = 500` (~310 ms for the same twelve), while the headline band and
+probability keep the full 2,000. The trial count is a parameter precisely so the
+two can differ: the band is what the user reads, and the ranking only has to get
+the order right. If a `GET /v1/foresight` cannot answer in under 400 ms, the fallbacks
 in order are: reduce trials to 500 (bands stay stable, the probability moves by
 well under a percentage point at demo scale), then precompute the cumulative
 per-weekday draws once per request rather than per trial. The trial count is a
