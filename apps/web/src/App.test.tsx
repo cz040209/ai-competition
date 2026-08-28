@@ -95,6 +95,31 @@ beforeEach(() => {
           headers: { "content-type": "application/json" },
         });
       }
+      if (url.endsWith("/v1/butler/thread")) {
+        return new Response(
+          JSON.stringify({ id: "t1", title: "Butler", messages: [], pending_approvals: [] }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.endsWith("/v1/categories")) {
+        return new Response(JSON.stringify([{ slug: "food", label: "Food & drink" }]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/v1/butler/messages")) {
+        const done = {
+          type: "done",
+          answer: "I have written it up as a draft for you to check.",
+          evidence: [],
+          tools_used: [],
+          approval: null,
+        };
+        return new Response(`data: ${JSON.stringify(done)}\n\n`, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        });
+      }
       if (url.endsWith("/v1/dashboard/today")) {
         return new Response(JSON.stringify(dashboard), {
           status: 200,
@@ -209,5 +234,51 @@ describe("App", () => {
 
     await waitFor(() => expect(screen.getByText(/Coming in week/i)).toBeInTheDocument());
     expect(screen.getByRole("button", { name: /^Today$/i })).toBeInTheDocument();
+  });
+});
+
+describe("Adding spending from anywhere", () => {
+  async function signedIn() {
+    renderApp();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    await user.click(await screen.findByRole("button", { name: /sign in/i }));
+    return user;
+  }
+
+  it("offers one way in from Today", async () => {
+    const user = await signedIn();
+    await user.click(await screen.findByRole("button", { name: "Add spending" }));
+    expect(await screen.findByRole("tab", { name: "Type" })).toBeInTheDocument();
+  });
+
+  it("offers the same way in from Activity", async () => {
+    const user = await signedIn();
+    await user.click(await screen.findByRole("button", { name: /^Activity$/i }));
+    await user.click(await screen.findByRole("button", { name: "Add spending" }));
+    expect(await screen.findByRole("tab", { name: "Show" })).toBeInTheDocument();
+  });
+
+  it("does not interrupt the Butler with a second way in", async () => {
+    const user = await signedIn();
+    await user.click(await screen.findByRole("button", { name: /^Butler$/i }));
+    expect(screen.queryByRole("button", { name: "Add spending" })).not.toBeInTheDocument();
+  });
+
+  it("carries a typed sentence to the Butler and asks it there", async () => {
+    const user = await signedIn();
+    await user.click(await screen.findByRole("button", { name: "Add spending" }));
+    await user.type(
+      await screen.findByLabelText("What did you spend?"),
+      "grabbed lunch at the mamak, twelve fifty",
+    );
+    await user.click(screen.getByRole("button", { name: /Tell Kira/ }));
+
+    expect(
+      await screen.findByText("grabbed lunch at the mamak, twelve fifty"),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText(/I have written it up as a draft/),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });

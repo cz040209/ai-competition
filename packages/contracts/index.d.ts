@@ -4,6 +4,7 @@ export type Schemas = components["schemas"];
 export type Activity = Schemas["ActivityResponse"];
 export type ActivityDay = Schemas["ActivityDayResponse"];
 export type CategorySummary = Schemas["CategorySummaryResponse"];
+export type Category = Schemas["CategoryResponse"];
 export type DashboardToday = Schemas["DashboardTodayResponse"];
 export type GoalSummary = Schemas["GoalSummaryResponse"];
 export type NextCommitment = Schemas["NextCommitmentResponse"];

@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+import json
 from datetime import date
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # `enable_decoding=False` stops the env sources from JSON-parsing list
+    # fields before validation, so CORS_ORIGINS can be written plainly.
+    model_config = SettingsConfigDict(
+        env_file=".env", extra="ignore", enable_decoding=False
+    )
 
     database_url: str = "postgresql+asyncpg://kira:kira@localhost:5432/kira"
     jwt_secret: str = "development-only-replace-with-a-secure-jwt-secret"
@@ -37,6 +43,22 @@ class Settings(BaseSettings):
     capture_receipt_enabled: bool = True
     capture_voice_enabled: bool = True
     capture_max_bytes: int = 8 * 1024 * 1024
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def _split_origins(cls, value: object) -> object:
+        """Accept the comma-separated list an operator would actually write.
+
+        pydantic-settings parses a list field from the environment as JSON, so
+        `CORS_ORIGINS=http://localhost:5173` — the form the example file
+        documents — would otherwise fail at startup rather than at review.
+        """
+        if not isinstance(value, str):
+            return value
+        text = value.strip()
+        if text.startswith("["):
+            return json.loads(text)
+        return [origin.strip() for origin in text.split(",") if origin.strip()]
 
     @property
     def checkpointer_dsn(self) -> str:

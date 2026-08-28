@@ -7,6 +7,10 @@ from collections.abc import AsyncGenerator
 
 os.environ.setdefault("DEMO_TODAY", "2026-09-03")
 os.environ.setdefault("JWT_SECRET", "test-secret-for-kira-auth-tests-123456")
+# The suite runs against the deterministic model, always. A developer with a
+# real key in their .env would otherwise send every un-stubbed turn to the
+# vendor: slow, billable, and impossible to assert prose against.
+os.environ.setdefault("BUTLER_OFFLINE", "1")
 
 import pytest
 from httpx import ASGITransport, AsyncClient

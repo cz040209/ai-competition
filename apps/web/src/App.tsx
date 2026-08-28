@@ -6,10 +6,12 @@ import {
   useConfirmDraft,
   useDashboardToday,
   useDiscardDraft,
+  useCategories,
   useMemories,
   useUnconfirm,
 } from "./api/hooks";
-import { IcActivity, IcMore, IcPlan, IcSpark, IcToday } from "./components/Icons";
+import { EntrySheet, type EntryAttachment } from "./components/EntrySheet";
+import { IcActivity, IcMore, IcPlan, IcPlus, IcSpark, IcToday } from "./components/Icons";
 import { Motes } from "./components/Motes";
 import { NavItem } from "./components/NavItem";
 import { ScrollContext } from "./components/Reveal";
@@ -30,6 +32,11 @@ export function App() {
   const [dir, setDir] = useState(0);
   const [boot, setBoot] = useState(true);
   const [signedIn, setSignedIn] = useState(false);
+  const [entry, setEntry] = useState(false);
+  // A sentence raised from Today or Activity, handed to the Butler to ask.
+  const [pending, setPending] = useState<{ text: string; attachment?: EntryAttachment } | null>(
+    null,
+  );
   const viewRef = useRef<HTMLDivElement>(null);
   const screenRef = useRef<HTMLDivElement>(null);
   const dashboard = useDashboardToday(signedIn);
@@ -39,6 +46,7 @@ export function App() {
   // Butler tab should already have its history when it appears.
   const butler = useButlerThread(signedIn);
   const memories = useMemories(signedIn && tab === "more");
+  const categories = useCategories(signedIn);
   const confirm = useConfirmDraft();
   const discard = useDiscardDraft();
   const unconfirm = useUnconfirm();
@@ -151,7 +159,13 @@ export function App() {
                     />
                   )}
                   {signedIn && tab === "butler" && (
-                    <Butler thread={butler.data} isLoading={butler.isLoading} />
+                    <Butler
+                      thread={butler.data}
+                      isLoading={butler.isLoading}
+                      categories={categories.data}
+                      pending={pending}
+                      onPendingAsked={() => setPending(null)}
+                    />
                   )}
                   {signedIn && tab === "plan" && (
                     <Placeholder title="Plan" blurb="Goals, scenarios, and the day planner." week="3" />
@@ -163,6 +177,23 @@ export function App() {
               </div>
             </ScrollContext.Provider>
           </SheetHostContext.Provider>
+
+          {signedIn && (tab === "today" || tab === "activity") && (
+            <button className="fab" onClick={() => setEntry(true)} aria-label="Add spending">
+              <IcPlus size={21} />
+            </button>
+          )}
+
+          {entry && (
+            <EntrySheet
+              onClose={() => setEntry(false)}
+              onAsk={(text, attachment) => {
+                setEntry(false);
+                setPending({ text, attachment });
+                go("butler");
+              }}
+            />
+          )}
 
           {signedIn && (
             <nav className="nav">

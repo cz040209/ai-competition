@@ -2,14 +2,15 @@
 
     START
       → load_context
-      → agent  ⇄  guard  →  tools       (reads; back to agent)
+      → agent  →  guard  →  tools       (reads; on to compose)
                   guard  →  approval    (writes; interrupt())
       → compose
       → extract_memory
       → END
 
-The shape is the argument. Reads loop freely, writes leave the loop, and the
-only path from a write tool to the database runs through a user's decision.
+The shape is the argument. Reads answer straight through — only a refusal is
+worth a second pass — writes leave the loop, and the only path from a write tool
+to the database runs through a user's decision.
 """
 
 from __future__ import annotations
@@ -53,9 +54,12 @@ def build_graph(checkpointer: BaseCheckpointSaver | None = None):
     )
     # A batch holding both reads and a write executes the reads first, then
     # stops at the write — so the approval card is asked with its evidence
-    # already gathered.
+    # already gathered. Reads that ran cleanly go straight to the answer; only a
+    # refusal is worth handing back to the model.
     builder.add_conditional_edges(
-        "tools", route_after_tools, {"approval": "approval", "agent": "agent"}
+        "tools",
+        route_after_tools,
+        {"approval": "approval", "agent": "agent", "compose": "compose"},
     )
     builder.add_edge("approval", "compose")
     builder.add_edge("compose", "extract_memory")

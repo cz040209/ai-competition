@@ -153,6 +153,11 @@ class ApprovalDecisionRequest(BaseModel):
     args: dict | None = None
 
 
+class CategoryResponse(BaseModel):
+    slug: str
+    label: str
+
+
 class MemoryResponse(ResponseModel):
     id: uuid.UUID
     kind: str

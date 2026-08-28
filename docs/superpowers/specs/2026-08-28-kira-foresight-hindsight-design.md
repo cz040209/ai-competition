@@ -42,6 +42,7 @@ above and none are started here.
 |---|---|---|
 | Probability representation | Integer basis points, 0..10000 | The engine's no-float rule holds all the way through the new work |
 | Simulation method | Empirical resampling from observed daily amounts, seeded PRNG | Honest about the user's actual distribution; needs no float; reproducible, therefore golden-file testable |
+| Randomness source | `engine/prng.py`, an integer xorshift64* written in the engine | `tests/engine/test_engine_purity.py` forbids the engine importing `random`. A tiny integer PRNG keeps that guardrail intact and is reproducible across Python versions, which `random`'s internals do not promise |
 | Scenario comparison | Every lever re-simulated under the **same seed** | Two runs differing by noise rather than by the lever would be a lie |
 | Advice provenance | A `daily_advice` row written nightly | `safe_today` is computed on read and never stored; Hindsight needs an exact record, not a reconstruction |
 | Hindsight scorer | A pure function in `engine/`, not a service | Proven by golden tests before any UI exists |
@@ -179,7 +180,7 @@ without one is projected but carries no probability.
 | Function | Contract |
 |---|---|
 | `project(snapshot, profile, days) -> Projection` | Deterministic median path. No randomness. Commitments land on their due dates; goals accrue daily; the balance walks forward. |
-| `simulate(snapshot, profile, days, trials, seed) -> Simulation` | Monte Carlo. Each trial draws each day's discretionary spend by **integer index** into that weekday's observed amounts, via `random.Random(seed)`. Percentile bands come from sorting integers and indexing — no float, no distributional assumption. |
+| `simulate(snapshot, profile, days, trials, seed) -> Simulation` | Monte Carlo. Each trial draws each day's discretionary spend by **integer index** into that weekday's observed amounts, via `Prng(seed)` from `engine/prng.py`. Percentile bands come from sorting integers and indexing — no float, no distributional assumption. |
 | `run_scenarios(snapshot, profile, levers, seed) -> tuple[ScenarioResult, ...]` | Applies each lever to a copy of the snapshot or profile and re-simulates **under the same seed**, so results differ by the lever and not by noise. |
 | `drivers(snapshot, profile, goal_id, candidates, seed) -> tuple[Driver, ...]` | Ranks candidate levers by basis points of probability gained per ringgit of change. This produces "+RM40 a month → 62% becomes 91%". |
 | `score_advice(records) -> TrackRecord` | The Hindsight scorer. Pure, and tested here rather than in the service, so it is proven before any UI consumes it. |

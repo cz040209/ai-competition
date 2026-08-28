@@ -3,6 +3,7 @@ import type {
   ButlerThread,
   Capture,
   CaptureAvailability,
+  Category,
   DashboardToday,
   Memory,
   TokenResponse,
@@ -106,6 +107,15 @@ export function useForgetMemory() {
 }
 
 /** Whether the camera and microphone affordances should be offered at all. */
+export function useCategories(enabled: boolean) {
+  return useQuery({
+    queryKey: ["categories"],
+    queryFn: () => api.get<Category[]>("/v1/categories"),
+    enabled,
+    staleTime: Infinity,
+  });
+}
+
 export function useCaptureAvailability(enabled: boolean) {
   return useQuery({
     queryKey: ["capture"],
