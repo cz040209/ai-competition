@@ -191,3 +191,23 @@ class Driver:
     probability_bp_before: int
     probability_bp_after: int
     bp_per_ringgit: int
+
+
+@dataclass(frozen=True, slots=True)
+class AdviceRecord:
+    """What Kira said on a day, and what actually happened."""
+
+    on: date
+    advised: Money
+    actual: Money
+
+
+@dataclass(frozen=True, slots=True)
+class TrackRecord:
+    """How Kira's advice actually did, over a stretch of days."""
+
+    days: int
+    followed: int
+    follow_rate_bp: int
+    mean_abs_deviation: Money
+    counterfactual_gain: Money
