@@ -7,12 +7,17 @@ much of today's safe-to-spend each outing would use.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from typing import Literal
+
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from kira.adapters.geo import haversine_km
 from kira.adapters.protocols import Place
 from kira.adapters.registry import get_adapters
+from kira.db.models import SOURCE_PLAN, User
 from kira.money import round_half_up
+from kira.services.transactions import TransactionView, create_transaction
 
 Mode = Literal["walk", "transit", "ride"]
 Band = Literal["ok", "tight", "over"]
@@ -211,4 +216,78 @@ async def find_places(
         places=tuple(sorted(under_cap, key=lambda p: p.total_sen)),
         nearby_count=len(nearby),
         matching_count=len(matching),
+    )
+
+
+# ── Adding a plan to today ────────────────────────────────────────────────────
+
+# Every place the planner knows is somewhere to eat, so a planned outing is
+# food. Travel is folded into the same row rather than split off into a second
+# transport draft: the user tapped one price for one outing, and two rows to
+# confirm separately is not what they added.
+PLAN_CATEGORY = "food"
+
+# The curated set carries a word, not a percentage. The word is turned into a
+# figure here so that every client agrees on what "high" is worth, and so that
+# none of them can quietly promote an estimate.
+#
+# All three sit well under what a read claims -- the receipt reader's own scans
+# come in at 94 -- because a price band is a weaker thing than a total printed
+# on a slip. Even "high" means the estimate is well founded, never that the bill
+# will read RM12.50.
+PLAN_CONFIDENCE: dict[str, int] = {"high": 70, "medium": 50, "low": 30}
+
+# A band this module does not recognise is read as the least certain one. The
+# alternative -- refusing it, or splitting the difference at "medium" -- would
+# either lose the user's tap over a vocabulary change or state more certainty
+# than anything actually supports.
+UNKNOWN_BAND_CONFIDENCE = PLAN_CONFIDENCE["low"]
+
+# Said on the draft itself, because the toast that announced it is gone by the
+# time the user reaches Activity. Three things it has to carry: where it came
+# from, that the price is an estimate rather than a bill, and -- the part the
+# whole design rests on -- that nothing has happened to today's money yet.
+PLAN_NOTE = (
+    "Planned, not spent — this is an estimate from your day plan. "
+    "Nothing counts against today until you confirm it."
+)
+
+
+def confidence_for(band: str) -> int:
+    """The percentage a place's confidence band is worth on a draft."""
+    return PLAN_CONFIDENCE.get(band, UNKNOWN_BAND_CONFIDENCE)
+
+
+async def add_to_today(
+    session: AsyncSession,
+    user: User,
+    *,
+    name: str,
+    total_sen: int,
+    confidence: str,
+    today: date,
+) -> TransactionView:
+    """Put a planned outing on today's drafts. An intention, not a spend.
+
+    A receipt says "I spent this"; a plan says "I intend to". Both are proposals
+    until the user says otherwise, which is why this goes through
+    ``create_transaction`` like every other capture path instead of writing a
+    row of its own — and why adding one moves no figure. Drafts are excluded
+    from every engine calculation, so safe-to-spend is exactly what it was until
+    the user comes back and confirms they actually ate.
+
+    ``total_sen`` is the whole outing, meal and travel together: it is the
+    figure on the row that was tapped, and a draft for the meal alone would not
+    be the thing the user thought they added.
+    """
+    return await create_transaction(
+        session,
+        user,
+        merchant=name,
+        amount_sen=total_sen,
+        occurred_on=today,
+        category=PLAN_CATEGORY,
+        source=SOURCE_PLAN,
+        confidence=confidence_for(confidence),
+        note=PLAN_NOTE,
     )

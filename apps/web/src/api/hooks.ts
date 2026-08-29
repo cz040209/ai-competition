@@ -6,8 +6,10 @@ import type {
   DashboardToday,
   DayPlan,
   Memory,
+  PlanDraft,
   TokenResponse,
   Transaction,
+  TransactionCorrection,
 } from "@kira/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -89,13 +91,18 @@ export function useDayPlan(params: DayPlanParams) {
 }
 
 /**
- * Every one of these moves money, so both the ledger and Today are refetched —
- * a stale safe-to-spend after a confirm would be a wrong number on screen.
+ * A write that changes what the ledger and Today are showing, whichever screen
+ * it was fired from.
+ *
+ * Both keys, always. A stale safe-to-spend after a confirm would be a wrong
+ * number on screen, and Today also carries the count of drafts waiting — so
+ * even a write that cannot move the money (adding a plan, correcting a draft)
+ * still changes something Today is showing.
  */
-function useSettle(action: "confirm" | "discard" | "unconfirm") {
+function useLedgerWrite<TData, TVariables>(mutationFn: (variables: TVariables) => Promise<TData>) {
   const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => api.post<Transaction>(`/v1/transactions/${id}/${action}`),
+  return useMutation<TData, Error, TVariables>({
+    mutationFn,
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: activityKey }),
@@ -103,6 +110,10 @@ function useSettle(action: "confirm" | "discard" | "unconfirm") {
       ]);
     },
   });
+}
+
+function useSettle(action: "confirm" | "discard" | "unconfirm") {
+  return useLedgerWrite((id: string) => api.post<Transaction>(`/v1/transactions/${id}/${action}`));
 }
 
 export function useConfirmDraft() {
@@ -115,6 +126,40 @@ export function useDiscardDraft() {
 
 export function useUnconfirm() {
   return useSettle("unconfirm");
+}
+
+/** What the user says a draft should have read. Anything left out stays as it is. */
+export type Correction = { id: string } & TransactionCorrection;
+
+/**
+ * Correct a draft before it is counted. Drafts only — the API refuses the rest.
+ *
+ * A draft is not on the ledger, so this rarely moves Today's figure by itself —
+ * but the corrected amount is the one the next confirm spends, and a hook that
+ * re-read only the ledger would be the one path able to leave a safe-to-spend
+ * on screen that was worked out from a figure the user has already overwritten.
+ */
+export function useCorrectDraft() {
+  return useLedgerWrite(({ id, ...correction }: Correction) =>
+    api.patch<Transaction>(`/v1/transactions/${id}`, correction),
+  );
+}
+
+/**
+ * Add a planned outing to today. It lands as a draft, like every other capture.
+ *
+ * The body is the place as the row showed it — the whole outing's price, and
+ * the place's own confidence *band*. The date, the percentage that band is
+ * worth and the note that says the money has not moved are all the server's,
+ * so no client can restate them.
+ *
+ * Today's safe-to-spend does not change here and is refetched anyway: the count
+ * of drafts waiting sits on the same response, and it has gone up by one.
+ */
+export function useAddPlanToToday() {
+  return useLedgerWrite((outing: PlanDraft) =>
+    api.post<Transaction>("/v1/day-plan/drafts", outing),
+  );
 }
 
 export const butlerThreadKey = ["butler", "thread"] as const;
@@ -175,9 +220,8 @@ export function useReadCapture(kind: "receipt" | "voice") {
 
 /** Save what was read. It becomes a draft, which is not yet the ledger. */
 export function useCreateDraft() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (draft: {
+  return useLedgerWrite(
+    (draft: {
       merchant: string;
       amount_sen: number;
       occurred_on: string;
@@ -186,13 +230,7 @@ export function useCreateDraft() {
       confidence?: number | null;
       note?: string;
     }) => api.post<Transaction>("/v1/transactions", draft),
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: activityKey }),
-        queryClient.invalidateQueries({ queryKey: dashboardTodayKey }),
-      ]);
-    },
-  });
+  );
 }
 
 export function useLogin() {

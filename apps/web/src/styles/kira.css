@@ -325,6 +325,10 @@
 .conf i{display:block;height:100%;background:var(--brass);border-radius:2px;transform-origin:left;
   animation:confFill 1.1s var(--spring) .25s both;}
 @keyframes confFill{from{transform:scaleX(0);}to{transform:scaleX(1);}}
+/* Correcting a misread amount, in the draft's own details. */
+.amt-input{width:88px;font:inherit;font-size:13.5px;font-variant-numeric:tabular-nums;text-align:right;
+  padding:6px 9px;border-radius:9px;border:1px solid var(--line-2);background:var(--surface);color:var(--ink);}
+.amt-input[aria-invalid="true"]{border-color:var(--clay);}
 .txn{display:flex;align-items:center;gap:13px;padding:13px 0;border-bottom:1px solid var(--line);}
 .txn:last-child{border-bottom:none;}
 .txn-ic{width:36px;height:36px;border-radius:12px;background:rgba(15,28,26,.055);display:grid;place-items:center;flex:none;color:var(--ink-3);}

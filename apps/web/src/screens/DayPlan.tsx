@@ -3,18 +3,26 @@ import { createPortal } from "react-dom";
 
 import type { Place } from "@kira/contracts";
 
-import { useDayPlan } from "../api/hooks";
+import { useAddPlanToToday, useDayPlan } from "../api/hooks";
 import { IcCheck } from "../components/Icons";
 import { Odometer } from "../components/Odometer";
 import { Reveal } from "../components/Reveal";
 import { Sheet, SheetHostContext } from "../components/Sheet";
 import { fmt } from "../lib/money";
+import {
+  bestFitId,
+  SORT_IDS,
+  SORTS,
+  sortPlaces,
+  type SortId,
+  type TravelMode,
+} from "../lib/placeSort";
 
 // No location yet beats a silent wrong one, so this is where distances and
 // travel costs are measured from until the user grants their own.
 const KLCC = { lat: 3.1577, lng: 101.712 };
 
-type Mode = "walk" | "transit" | "ride";
+type Mode = TravelMode;
 
 const MODES: { id: Mode; label: string }[] = [
   { id: "walk", label: "Walk" },
@@ -141,12 +149,23 @@ type DetailSheetProps = {
   place: Place;
   modeLabel: string;
   roomSen: number;
+  adding: boolean;
+  addFailed: boolean;
   onClose: () => void;
   onAdd: (place: Place) => void;
   onCopied: (message: string) => void;
 };
 
-function DetailSheet({ place, modeLabel, roomSen, onClose, onAdd, onCopied }: DetailSheetProps) {
+function DetailSheet({
+  place,
+  modeLabel,
+  roomSen,
+  adding,
+  addFailed,
+  onClose,
+  onAdd,
+  onCopied,
+}: DetailSheetProps) {
   const [copyFailure, setCopyFailure] = useState<CopyFailure | null>(null);
   const mealSen = place.total_sen - place.travel_sen;
   const rows: [string, string][] = [
@@ -277,14 +296,40 @@ function DetailSheet({ place, modeLabel, roomSen, onClose, onAdd, onCopied }: De
         </p>
       )}
 
+      {/* Said before the tap, not only after it. "Add to today" beside a price
+          reads like money leaving, and the whole point is that none does. */}
+      <p style={{ fontSize: 12, color: "rgba(233,237,233,.55)", lineHeight: 1.5, margin: "16px 0 0" }}>
+        Adding this puts a draft in Activity. Today&apos;s money stays where it is until you
+        confirm it, once you have actually eaten.
+      </p>
+
       <div style={{ display: "flex", gap: 9, marginTop: 10 }}>
         <button className="btn btn-line btn-sm" style={{ flex: 1 }} onClick={onClose}>
           Close
         </button>
-        <button className="btn btn-brass btn-sm" style={{ flex: 1 }} onClick={() => onAdd(place)}>
-          Add to today
+        <button
+          type="button"
+          className="btn btn-brass btn-sm"
+          style={{ flex: 1 }}
+          disabled={adding}
+          onClick={() => onAdd(place)}
+        >
+          {adding ? "Adding…" : "Add to today"}
         </button>
       </div>
+
+      {/* The sheet stays open on a failure. Closing it behind a confirmation
+          the server never agreed to would leave the user believing there is a
+          draft waiting for them that is not there. */}
+      {addFailed && (
+        <p
+          role="status"
+          style={{ fontSize: 12, color: "rgba(233,237,233,.62)", lineHeight: 1.5, margin: "10px 0 0" }}
+        >
+          I couldn&apos;t add that just now. Nothing was written, so nothing is waiting in
+          Activity — try again in a moment.
+        </p>
+      )}
     </Sheet>
   );
 }
@@ -296,6 +341,14 @@ function DetailSheet({ place, modeLabel, roomSen, onClose, onAdd, onCopied }: De
  */
 export function DayPlan() {
   const [mode, setMode] = useState<Mode>("walk");
+  // Not persisted, here or anywhere. A sort is a lens on one screen for one
+  // look, not something the user told us about themselves — and this app
+  // already has the mechanism for the durable kind, `butler_memories` with
+  // kind="preference", which is where a real "I always walk, keep it cheap"
+  // belongs if it is ever asked for. Quietly growing a second, invisible
+  // preference store out of a segmented control is how the two end up
+  // disagreeing.
+  const [sort, setSort] = useState<SortId>("balanced");
   const [halalOnly, setHalalOnly] = useState(true);
   const [capSen, setCapSen] = useState<number | undefined>(undefined);
   const [origin, setOrigin] = useState({ ...KLCC, real: false });
@@ -303,6 +356,7 @@ export function DayPlan() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const sheetHost = useContext(SheetHostContext);
+  const addPlan = useAddPlanToToday();
 
   const { data, isLoading, isError } = useDayPlan({
     lat: origin.lat,
@@ -358,7 +412,11 @@ export function DayPlan() {
     );
   }
 
-  const results = [...data.places].sort((a, b) => a.total_sen - b.total_sen);
+  // Re-ordered here, over the whole list the API sent — it is never truncated
+  // on the way, so nothing is lost by not asking the server again. Ordering is
+  // all this does: `sortPlaces` reads the figures and returns the same places,
+  // so no ringgit and no minute on the page depends on which sort is on.
+  const results = sortPlaces(data.places, sort);
   // Both figures are the server's own, never inferred here: on a day already
   // spent out the room is nil, and dividing to recover it would invent one.
   const roomSen = data.room_sen;
@@ -396,10 +454,39 @@ export function DayPlan() {
   const someFellBack = straightLineCount > 0 && !everyPlaceFellBack;
   const modeLabel = MODES.find((candidate) => candidate.id === mode)?.label ?? mode;
   const selected = results.find((place) => place.id === selectedId) ?? null;
+  // Null on most lists, and that is the point: the badge is a claim, not a
+  // label for row one. See bestFitId for the three things that have to hold.
+  const bestFit = bestFitId(results, sort, mode);
+  // A control over one row has nothing to order, and a control over none has
+  // nothing to talk about.
+  const canSort = results.length > 1;
 
+  /**
+   * The whole outing goes across — meal and travel, the figure on the row —
+   * with the place's own confidence band rather than a percentage. What "high"
+   * is worth, what date this is, and the wording that says the money has not
+   * moved are all the server's, and a screen that restated any of them could
+   * disagree with the draft it just made.
+   *
+   * The sheet closes on the answer, never on the tap: a plan that failed to
+   * save must not leave a confirmation behind saying it is waiting.
+   */
   const addToToday = (place: Place) => {
-    setSelectedId(null);
-    setToast(`${place.name} added to today. RM${fmt(place.total_sen)} pencilled in.`);
+    addPlan.mutate(
+      { name: place.name, total_sen: place.total_sen, confidence: place.confidence },
+      {
+        onSuccess: () => {
+          setSelectedId(null);
+          // Deliberately not the prototype's "pencilled in", which sounds like
+          // the money has been set aside. Nothing has been set aside, so the
+          // confirmation says where the draft went and what has not happened.
+          setToast(
+            `RM${fmt(place.total_sen)} for ${place.name} is waiting in Activity as a draft. `
+            + "Today's money doesn't change until you confirm it.",
+          );
+        },
+      },
+    );
   };
 
   return (
@@ -517,6 +604,42 @@ export function DayPlan() {
           )}
         </Reveal>
 
+        {/* On the screen rather than tuned behind it. The order the list is in
+            is a choice, and a choice the user cannot see is one they can
+            neither trust nor overrule — which is exactly how a two-hour walk
+            ends up at the top wearing a badge. */}
+        {canSort && (
+          <Reveal delay={52} style={{ marginTop: 14 }}>
+            <div className="filters" style={{ marginTop: 0, alignItems: "center" }}>
+              <span className="eyebrow" aria-hidden>Sort</span>
+              {/* One choice of three, so radios rather than three toggles: a
+                  set of aria-pressed buttons does not say that turning one on
+                  turns the others off. */}
+              <div
+                role="radiogroup"
+                aria-label="Sort by"
+                style={{ display: "flex", gap: 7, flexWrap: "wrap" }}
+              >
+                {SORT_IDS.map((id) => (
+                  <button
+                    key={id}
+                    type="button"
+                    role="radio"
+                    aria-checked={sort === id}
+                    className={`fchip ${sort === id ? "on" : ""}`}
+                    onClick={() => setSort(id)}
+                  >
+                    {SORTS[id].label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <p style={{ margin: "10px 0 0", fontSize: 12, color: "var(--muted)", lineHeight: 1.5 }}>
+              {SORTS[sort].explains}
+            </p>
+          </Reveal>
+        )}
+
         {everyPlaceFellBack && (
           <Reveal delay={55} style={{ marginTop: 14 }}>
             <p
@@ -536,13 +659,19 @@ export function DayPlan() {
               <button
                 type="button"
                 className={`place ${selectedId === place.id ? "sel" : ""}`}
-                onClick={() => setSelectedId(place.id)}
+                // A failure belongs to the place it happened on. Left standing,
+                // it would greet the next sheet with a complaint about a shop
+                // the user is no longer looking at.
+                onClick={() => {
+                  addPlan.reset();
+                  setSelectedId(place.id);
+                }}
               >
                 <span className="place-rank">{index + 1}</span>
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <span style={{ display: "flex", alignItems: "center", gap: 7 }}>
                     <b style={{ fontSize: 15, letterSpacing: "-.02em" }}>{place.name}</b>
-                    {index === 0 && <span className="badge badge-best">Best fit</span>}
+                    {place.id === bestFit && <span className="badge badge-best">Best fit</span>}
                     {place.band === "over" && <span className="badge badge-over">Over</span>}
                   </span>
                   <span style={{ display: "block", fontSize: 12, color: "var(--muted)", marginTop: 3 }}>
@@ -657,6 +786,8 @@ export function DayPlan() {
           place={selected}
           modeLabel={modeLabel}
           roomSen={roomSen}
+          adding={addPlan.isPending}
+          addFailed={addPlan.isError}
           onClose={() => setSelectedId(null)}
           onAdd={addToToday}
           onCopied={setToast}

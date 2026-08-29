@@ -12,8 +12,19 @@ below opt in with ``serving(StubRouting(...))``.
 from __future__ import annotations
 
 from kira.adapters.protocols import Place
+from kira.db.models import SOURCE_PLAN, TXN_DRAFT
+from kira.engine import safe_to_spend
 from kira.money import Money
-from kira.services.day_plan import evaluate_place, find_places
+from kira.seed.demo import DEMO_TODAY, seed_demo_user
+from kira.services.day_plan import (
+    PLAN_CONFIDENCE,
+    add_to_today,
+    confidence_for,
+    evaluate_place,
+    find_places,
+)
+from kira.services.snapshot import load_snapshot
+from kira.services.transactions import confirm_draft, list_activity
 from tests.conftest import StubRouting, serving
 
 
@@ -711,3 +722,147 @@ class TestARouterThatMisbehaves:
         assert len(found.places) == 5
         assert {p.distance_basis for p in found.places} == {"straight_line"}
         assert all(p.road_km is None for p in found.places)
+
+
+async def demo(session):
+    user = await seed_demo_user(session)
+    await session.flush()
+    return user
+
+
+class TestAddingAPlanToToday:
+    """A receipt says "I spent this". A plan says "I intend to".
+
+    Both are proposals, so both are drafts — but a draft is excluded from every
+    engine calculation, and that exclusion is what these tests are really
+    about. Adding a plan must leave today's money exactly where it was.
+    """
+
+    async def test_adds_one_draft_for_the_whole_outing(self, session):
+        user = await demo(session)
+        before = len((await list_activity(session, user)).drafts)
+
+        # RM12.50 of meal and RM5.00 of fare: what the row on the planner shows
+        # is the sum, and the sum is what the user tapped.
+        added = await add_to_today(
+            session,
+            user,
+            name="Kopi Kaki",
+            total_sen=1750,
+            confidence="high",
+            today=DEMO_TODAY,
+        )
+
+        drafts = (await list_activity(session, user)).drafts
+        assert len(drafts) == before + 1
+        assert added.amount_sen == 1750
+        assert added.status == TXN_DRAFT
+        assert added.merchant == "Kopi Kaki"
+        assert [draft.id for draft in drafts].count(added.id) == 1
+
+    async def test_the_draft_says_it_is_a_plan_and_that_the_price_is_a_guess(self, session):
+        user = await demo(session)
+
+        added = await add_to_today(
+            session, user, name="Kopi Kaki", total_sen=1750, confidence="high", today=DEMO_TODAY
+        )
+
+        assert added.source == SOURCE_PLAN
+        assert added.category == "food"
+        assert added.category_label == "Food & drink"
+        assert added.occurred_on == DEMO_TODAY
+        assert "estimate" in added.note
+        assert "day plan" in added.note
+        # The invariant the whole screen rests on, said on the row itself: the
+        # toast that announced this is long gone by the time Activity is read.
+        assert "Nothing counts against today until you confirm it." in added.note
+        # Nothing here may read as money already put aside.
+        assert "pencilled" not in added.note.lower()
+
+    async def test_safe_to_spend_does_not_move_while_it_is_a_plan(self, session):
+        user = await demo(session)
+        before = safe_to_spend(await load_snapshot(session, user, DEMO_TODAY))
+
+        await add_to_today(
+            session, user, name="Omakase Empat", total_sen=5000, confidence="low", today=DEMO_TODAY
+        )
+
+        after = safe_to_spend(await load_snapshot(session, user, DEMO_TODAY))
+        # RM50.00 of intention, and not one sen of it counted. The user has not
+        # eaten yet; a figure that dropped here would be spending their money
+        # for them on the strength of a tap.
+        assert before.safe_today == Money(5297)
+        assert after.safe_today == Money(5297)
+        assert after.spent_today == before.spent_today
+
+    async def test_confirming_it_is_what_finally_spends_the_money(self, session):
+        user = await demo(session)
+        before = safe_to_spend(await load_snapshot(session, user, DEMO_TODAY))
+        added = await add_to_today(
+            session, user, name="Omakase Empat", total_sen=5000, confidence="low", today=DEMO_TODAY
+        )
+
+        await confirm_draft(session, user, added.id)
+
+        after = safe_to_spend(await load_snapshot(session, user, DEMO_TODAY))
+        # RM50.00 leaves today's spending and the balance both, so the day loses
+        # RM52.27 rather than RM50.00 — but it loses it now, once the user has
+        # said the money is gone, and not a moment before.
+        assert after.safe_today == Money(70)
+        assert after.spent_today == before.spent_today + Money(5000)
+
+    async def test_it_is_waiting_in_activity_alongside_every_other_draft(self, session):
+        user = await demo(session)
+        before = (await list_activity(session, user)).draft_total_sen
+
+        added = await add_to_today(
+            session, user, name="Kopi Kaki", total_sen=1750, confidence="high", today=DEMO_TODAY
+        )
+
+        activity = await list_activity(session, user)
+        # Nothing new had to be built for this: drafts already surface here, and
+        # a plan is one, so it arrives with the receipt and the voice note.
+        waiting = next(draft for draft in activity.drafts if draft.id == added.id)
+        assert waiting.source == SOURCE_PLAN
+        assert activity.draft_total_sen == before + 1750
+        # The ledger is confirmed spending only, and an intention is not that.
+        assert added.id not in {
+            txn.id for day in activity.days for txn in day.transactions
+        }
+        assert activity.spent_this_cycle_sen == 63135
+
+    async def test_maps_each_band_to_a_figure_below_what_a_read_claims(self, session):
+        user = await demo(session)
+
+        bands = {}
+        for band in ("high", "medium", "low"):
+            added = await add_to_today(
+                session,
+                user,
+                name=f"Place {band}",
+                total_sen=1000,
+                confidence=band,
+                today=DEMO_TODAY,
+            )
+            bands[band] = added.confidence
+
+        assert bands == {"high": 70, "medium": 50, "low": 30}
+        # A curated price band is a weaker thing than a total printed on a slip.
+        # The receipt reader's own scans come in at 94, and nothing here may
+        # dress an estimate up to look like one of those.
+        assert max(bands.values()) < 94
+        assert bands["high"] > bands["medium"] > bands["low"]
+
+    async def test_a_band_this_build_does_not_know_is_read_as_the_least_certain(self, session):
+        user = await demo(session)
+
+        # The bands come from a regenerated data file. A word this build has not
+        # seen should cost the user their tap the least, and must not be turned
+        # into more certainty than anything behind it supports.
+        added = await add_to_today(
+            session, user, name="Kopi Kaki", total_sen=1750, confidence="astonishing",
+            today=DEMO_TODAY,
+        )
+
+        assert added.confidence == PLAN_CONFIDENCE["low"]
+        assert confidence_for("astonishing") == confidence_for("low")

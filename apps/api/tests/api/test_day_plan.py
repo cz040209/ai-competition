@@ -418,3 +418,165 @@ class TestDayOnWhichNothingIsLeft:
         # is an empty list under a stated ceiling of zero, not a stocked one.
         assert body["cap_sen"] == 0
         assert body["places"] == []
+
+
+def auth(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+class TestAddingAPlanToToday:
+    """POST /v1/day-plan/drafts. A plan is an intention, and an intention that
+    moved today's figure would be spending the user's money on a tap."""
+
+    async def test_requires_a_token(self, client):
+        response = await client.post(
+            "/v1/day-plan/drafts",
+            json={"name": "Kopi Kaki", "total_sen": 1750, "confidence": "high"},
+        )
+        assert response.status_code == 401
+
+    async def test_creates_one_draft_at_the_whole_outing_price(self, client, session):
+        token = await demo_token(client, session)
+        before = (await client.get("/v1/transactions", headers=auth(token))).json()
+
+        response = await client.post(
+            "/v1/day-plan/drafts",
+            json={"name": "Kopi Kaki", "total_sen": 1750, "confidence": "high"},
+            headers=auth(token),
+        )
+
+        assert response.status_code == 201, response.text
+        body = response.json()
+        assert body["merchant"] == "Kopi Kaki"
+        assert body["amount_sen"] == 1750
+        assert body["status"] == "draft"
+        assert body["source"] == "plan"
+        assert body["category"] == "food"
+        assert body["confidence"] == 70
+        # The server's clock, not the client's: the demo day is pinned, and a
+        # browser in another timezone must not date a draft to its own today.
+        assert body["occurred_on"] == today_for().isoformat()
+
+        after = (await client.get("/v1/transactions", headers=auth(token))).json()
+        assert len(after["drafts"]) == len(before["drafts"]) + 1
+        assert after["draft_total_sen"] == before["draft_total_sen"] + 1750
+
+    async def test_it_is_waiting_in_activity_with_the_other_drafts(self, client, session):
+        token = await demo_token(client, session)
+        created = (
+            await client.post(
+                "/v1/day-plan/drafts",
+                json={"name": "Kopi Kaki", "total_sen": 1750, "confidence": "high"},
+                headers=auth(token),
+            )
+        ).json()
+
+        listed = (await client.get("/v1/transactions", headers=auth(token))).json()
+
+        # Nothing new was built for this: the ledger already surfaces drafts,
+        # and a plan is one.
+        waiting = next(draft for draft in listed["drafts"] if draft["id"] == created["id"])
+        assert waiting["source"] == "plan"
+        assert waiting["category_label"] == "Food & drink"
+        assert "estimate" in waiting["note"]
+        assert "Nothing counts against today until you confirm it." in waiting["note"]
+        # Not on the ledger: that is confirmed spending, and this is an intention.
+        on_ledger = {txn["id"] for day in listed["days"] for txn in day["transactions"]}
+        assert created["id"] not in on_ledger
+
+    async def test_todays_figure_does_not_move_until_it_is_confirmed(self, client, session):
+        token = await demo_token(client, session)
+        before = (await client.get("/v1/dashboard/today", headers=auth(token))).json()
+
+        created = (
+            await client.post(
+                "/v1/day-plan/drafts",
+                json={"name": "Omakase Empat", "total_sen": 5000, "confidence": "low"},
+                headers=auth(token),
+            )
+        ).json()
+        during = (await client.get("/v1/dashboard/today", headers=auth(token))).json()
+
+        await client.post(f"/v1/transactions/{created['id']}/confirm", headers=auth(token))
+        after = (await client.get("/v1/dashboard/today", headers=auth(token))).json()
+
+        # RM50.00 of intention costs nothing at all. The row exists — the count
+        # of drafts waiting proves it — and still the day is untouched.
+        assert during["safe_today_sen"] == before["safe_today_sen"] == 5297
+        assert during["spent_today_sen"] == before["spent_today_sen"]
+        assert during["drafts_waiting"] == before["drafts_waiting"] + 1
+        # Confirmed, and only now, the money leaves.
+        assert after["safe_today_sen"] == 70
+        assert after["drafts_waiting"] == before["drafts_waiting"]
+
+    async def test_maps_each_confidence_band(self, client, session):
+        token = await demo_token(client, session)
+
+        read = {}
+        for band in ("high", "medium", "low"):
+            response = await client.post(
+                "/v1/day-plan/drafts",
+                json={"name": f"Place {band}", "total_sen": 1000, "confidence": band},
+                headers=auth(token),
+            )
+            read[band] = response.json()["confidence"]
+
+        # The band is the client's; the percentage is the server's, so two
+        # clients cannot come to different answers about what "high" is worth.
+        assert read == {"high": 70, "medium": 50, "low": 30}
+
+    async def test_an_unfamiliar_band_is_taken_as_the_least_certain(self, client, session):
+        token = await demo_token(client, session)
+
+        response = await client.post(
+            "/v1/day-plan/drafts",
+            json={"name": "Kopi Kaki", "total_sen": 1750, "confidence": "astonishing"},
+            headers=auth(token),
+        )
+
+        # The place data is regenerated, so an unknown word costs the user their
+        # tap rather than being promoted into certainty nothing supports.
+        assert response.status_code == 201, response.text
+        assert response.json()["confidence"] == 30
+
+    async def test_refuses_an_outing_that_costs_nothing(self, client, session):
+        token = await demo_token(client, session)
+        response = await client.post(
+            "/v1/day-plan/drafts",
+            json={"name": "Kopi Kaki", "total_sen": 0, "confidence": "high"},
+            headers=auth(token),
+        )
+        assert response.status_code == 422
+
+    async def test_refuses_a_place_with_no_name(self, client, session):
+        token = await demo_token(client, session)
+        response = await client.post(
+            "/v1/day-plan/drafts",
+            json={"name": "", "total_sen": 1750, "confidence": "high"},
+            headers=auth(token),
+        )
+        assert response.status_code == 422
+
+    async def test_a_plan_is_correctable_like_any_other_draft(self, client, session):
+        token = await demo_token(client, session)
+        created = (
+            await client.post(
+                "/v1/day-plan/drafts",
+                json={"name": "Kopi Kaki", "total_sen": 1750, "confidence": "high"},
+                headers=auth(token),
+            )
+        ).json()
+
+        # The bill came to more than the estimate, which is the ordinary case
+        # this whole path exists to survive.
+        corrected = await client.patch(
+            f"/v1/transactions/{created['id']}",
+            json={"amount_sen": 2010},
+            headers=auth(token),
+        )
+
+        assert corrected.status_code == 200, corrected.text
+        assert corrected.json()["amount_sen"] == 2010
+        assert corrected.json()["source"] == "plan"
+        # An estimate the user has overwritten is no longer an estimate.
+        assert corrected.json()["confidence"] is None

@@ -147,6 +147,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/transactions/{transaction_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Patch Transaction
+         * @description Correct a draft that was read wrong. Nothing already settled is editable.
+         *
+         *     No audit event: neither create nor any of the settle paths below writes one,
+         *     and a lone entry for corrections would read as a complete trail that is not.
+         */
+        patch: operations["patch_transaction_v1_transactions__transaction_id__patch"];
+        trace?: never;
+    };
     "/v1/transactions/{transaction_id}/confirm": {
         parameters: {
             query?: never;
@@ -401,6 +424,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/day-plan/drafts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Plan Draft
+         * @description Add a planned outing to today. It waits as a draft until it is confirmed.
+         *
+         *     Deliberately not a client POST to /v1/transactions with ``source: "plan"``:
+         *     the date is the server's clock, the confidence band's percentage is the
+         *     server's mapping, and the note that says the money has not moved is the
+         *     server's wording. Left to the client, three things a plan draft depends on
+         *     would be restatable by whoever called it.
+         *
+         *     Nothing here touches safe-to-spend, and that is the point rather than an
+         *     omission — a draft is excluded from every engine calculation, so the figure
+         *     on Today is the same after this call as before it.
+         */
+        post: operations["post_plan_draft_v1_day_plan_drafts_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -594,6 +647,25 @@ export interface components {
             spent_this_cycle_sen: number;
             /** Count */
             count: number;
+        };
+        /**
+         * CorrectTransactionRequest
+         * @description What the user says a draft should have read. Every field is optional.
+         *
+         *     Omitted means "leave it alone", which is why nothing here defaults to a
+         *     value: a body carrying only ``amount_sen`` must not blank the merchant.
+         *     ``confidence`` is absent on purpose — it is the reader's own figure, and a
+         *     corrected amount clears it rather than letting a client restate it.
+         */
+        CorrectTransactionRequest: {
+            /** Merchant */
+            merchant?: string | null;
+            /** Amount Sen */
+            amount_sen?: number | null;
+            /** Category */
+            category?: string | null;
+            /** Note */
+            note?: string | null;
         };
         /** CreateTransactionRequest */
         CreateTransactionRequest: {
@@ -831,6 +903,29 @@ export interface components {
             halal: boolean;
             /** Note */
             note: string;
+        };
+        /**
+         * PlanDraftRequest
+         * @description A place the user tapped "Add to today" on, as the row showed it.
+         *
+         *     ``total_sen`` is the whole outing — meal plus travel — because that is the
+         *     single figure on the row and in the sheet's total. Sending the meal alone
+         *     would put a draft on screen that is not the thing the user added.
+         *
+         *     ``confidence`` is the place's own band, not a percentage: what "high" is
+         *     worth is the server's to decide, so two clients cannot come to different
+         *     answers about it. It is typed as a plain string rather than an enum because
+         *     the bands come from a curated data file that is regenerated, and a word this
+         *     build has not seen should cost the user their tap the least — the service
+         *     reads an unfamiliar one as the least certain band.
+         */
+        PlanDraftRequest: {
+            /** Name */
+            name: string;
+            /** Total Sen */
+            total_sen: number;
+            /** Confidence */
+            confidence: string;
         };
         /** RegisterRequest */
         RegisterRequest: {
@@ -1148,6 +1243,41 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransactionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_transaction_v1_transactions__transaction_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                transaction_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CorrectTransactionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1606,6 +1736,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DayPlanResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_plan_draft_v1_day_plan_drafts_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlanDraftRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransactionResponse"];
                 };
             };
             /** @description Validation Error */

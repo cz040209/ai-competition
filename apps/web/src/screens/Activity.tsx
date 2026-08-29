@@ -21,7 +21,10 @@ type ActivityProps = {
   onConfirm: (id: string) => void;
   onDiscard: (id: string) => void;
   onUnconfirm: (id: string) => void;
+  /** Resolves when the correction is saved, and rejects when it is not. */
+  onCorrect: (id: string, amountSen: number) => void | Promise<unknown>;
   settlingId: string | null;
+  correctingId: string | null;
   category: string | null;
   onCategory: (slug: string | null) => void;
   go: (tab: Tab) => void;
@@ -34,7 +37,9 @@ export function Activity({
   onConfirm,
   onDiscard,
   onUnconfirm,
+  onCorrect,
   settlingId,
+  correctingId,
   category,
   onCategory,
   go,
@@ -120,7 +125,9 @@ export function Activity({
                     draft={draft}
                     onConfirm={onConfirm}
                     onDiscard={onDiscard}
+                    onCorrect={onCorrect}
                     settling={settlingId === draft.id}
+                    correcting={correctingId === draft.id}
                   />
                 </Reveal>
               ))}

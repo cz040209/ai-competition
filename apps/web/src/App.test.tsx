@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { DayPlan } from "@kira/contracts";
+import type { DayPlan, Transaction } from "@kira/contracts";
 
 import { App } from "./App";
 
@@ -27,7 +27,7 @@ const DASHBOARD = {
   goals: [],
 };
 
-const DRAFT = {
+const DRAFT: Transaction = {
   id: "d1",
   merchant: "Nasi Kandar Pelita",
   amount_sen: 1890,
@@ -40,7 +40,7 @@ const DRAFT = {
   note: "Line item total matched.",
 };
 
-const LEDGER_TXN = {
+const LEDGER_TXN: Transaction = {
   id: "t1",
   merchant: "Grab — KLCC to home",
   amount_sen: 1620,
@@ -103,6 +103,9 @@ const DAY_PLAN: DayPlan = {
 let activity = ACTIVITY;
 let dashboard = DASHBOARD;
 let asked: (string | null)[] = [];
+/** What a correction actually put on the wire, and how often Today re-read. */
+let corrected: unknown = null;
+let dashboardReads = 0;
 
 function renderApp() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -117,10 +120,12 @@ beforeEach(() => {
   activity = ACTIVITY;
   dashboard = DASHBOARD;
   asked = [];
+  corrected = null;
+  dashboardReads = 0;
   vi.useFakeTimers({ shouldAdvanceTime: true });
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (input: RequestInfo | URL) => {
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith("/v1/auth/refresh")) return new Response("", { status: 401 });
       if (url.endsWith("/v1/auth/login")) {
@@ -130,7 +135,18 @@ beforeEach(() => {
         });
       }
       if (url.endsWith("/v1/dashboard/today")) {
+        dashboardReads += 1;
         return new Response(JSON.stringify(dashboard), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith(`/v1/transactions/${DRAFT.id}`) && init?.method === "PATCH") {
+        corrected = JSON.parse(String(init.body));
+        // The API clears the confidence on any amount it did not read itself.
+        const draft = { ...DRAFT, ...(corrected as object), confidence: null };
+        activity = { ...ACTIVITY, drafts: [draft], draft_total_sen: draft.amount_sen };
+        return new Response(JSON.stringify(draft), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
@@ -215,6 +231,30 @@ describe("App", () => {
     await waitFor(() => expect(screen.getByText(/Nothing waiting/)).toBeInTheDocument());
     await user.click(screen.getByRole("button", { name: /^Today$/i }));
     expect(await screen.findByLabelText("RM33.21")).toBeInTheDocument();
+  });
+
+  it("corrects a misread amount in sen, and re-reads both screens", async () => {
+    renderApp();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    await user.click(await screen.findByRole("button", { name: /sign in/i }));
+    await user.click(await screen.findByRole("button", { name: /^Activity$/i }));
+    await user.click(await screen.findByRole("button", { name: "Details" }));
+    const readsBefore = dashboardReads;
+
+    await user.click(screen.getByRole("button", { name: "Correct" }));
+    const field = screen.getByLabelText("Amount in ringgit");
+    await user.clear(field);
+    await user.type(field, "19.90");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    // Ringgit on screen, sen on the wire.
+    await waitFor(() => expect(corrected).toEqual({ amount_sen: 1990 }));
+    // The ledger re-reads, so the corrected figure replaces what was heard,
+    // in the card's head and in the details row it was typed into…
+    await waitFor(() => expect(screen.getAllByText("RM19.90")).toHaveLength(2));
+    expect(screen.getByText(/Your figure, not a read/)).toBeInTheDocument();
+    // …and so does Today, which no safe-to-spend may outlive.
+    await waitFor(() => expect(dashboardReads).toBeGreaterThan(readsBefore));
   });
 
   it("opens a ledger row and moves it back to the drafts", async () => {

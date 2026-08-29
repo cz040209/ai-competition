@@ -4,6 +4,7 @@ import {
   useActivity,
   useButlerThread,
   useConfirmDraft,
+  useCorrectDraft,
   useDashboardToday,
   useDiscardDraft,
   useMemories,
@@ -42,8 +43,10 @@ export function App() {
   const confirm = useConfirmDraft();
   const discard = useDiscardDraft();
   const unconfirm = useUnconfirm();
+  const correct = useCorrectDraft();
   const settlingId =
     [confirm, discard, unconfirm].find((mutation) => mutation.isPending)?.variables ?? null;
+  const correctingId = correct.isPending ? (correct.variables?.id ?? null) : null;
 
   useEffect(() => {
     const timer = setTimeout(() => setBoot(false), 2500);
@@ -144,7 +147,13 @@ export function App() {
                       onConfirm={confirm.mutate}
                       onDiscard={discard.mutate}
                       onUnconfirm={unconfirm.mutate}
+                      // mutateAsync, not mutate: the card holds the entry open
+                      // until the server answers, so a correction that failed
+                      // cannot close as though it had been saved.
+                      onCorrect={(id, amountSen) =>
+                        correct.mutateAsync({ id, amount_sen: amountSen })}
                       settlingId={settlingId}
+                      correctingId={correctingId}
                       category={category}
                       onCategory={setCategory}
                       go={go}

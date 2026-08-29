@@ -3,13 +3,13 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { DayPlan as DayPlanData, Place } from "@kira/contracts";
+import type { DayPlan as DayPlanData, Place, Transaction } from "@kira/contracts";
 
 import { api } from "../api/client";
 import { DayPlan } from "./DayPlan";
 
 vi.mock("../api/client", () => ({
-  api: { get: vi.fn() },
+  api: { get: vi.fn(), post: vi.fn() },
 }));
 
 const ROOM_SEN = 5297;
@@ -82,6 +82,80 @@ const SKY_BAR: Place = {
 
 const PLACES: Place[] = [PELITA, CHEE_MENG, SKY_BAR];
 
+/**
+ * The list as it actually read once road distances arrived, with the tension
+ * that put a two-hour walk at the top of it: the cheapest outing is 109 minutes
+ * on foot, the nearest is RM7 dearer, and the one a person would pick is
+ * neither of them.
+ */
+const KENNY_HILLS: Place = {
+  id: "t1",
+  name: "Kenny Hills Bakers",
+  kind: "Bakery",
+  address: "Jalan Kasah, Bukit Tunku, 50480 Kuala Lumpur",
+  lat: 3.1633,
+  lng: 101.6737,
+  km: 7.9,
+  road_km: 7.9,
+  distance_basis: "road",
+  travel_sen: 0,
+  minutes: 109,
+  total_sen: 1100,
+  share: 1100 / ROOM_SEN,
+  band: "ok",
+  confidence: "medium",
+  halal: false,
+  note: "",
+};
+
+const GERAI: Place = {
+  id: "t2",
+  name: "Gerai Nasi Lemak",
+  kind: "Malay",
+  address: "Jalan P Ramlee, 50250 Kuala Lumpur",
+  lat: 3.1566,
+  lng: 101.7108,
+  km: 0.15,
+  road_km: 0.15,
+  distance_basis: "road",
+  travel_sen: 0,
+  minutes: 8,
+  total_sen: 1800,
+  share: 1800 / ROOM_SEN,
+  band: "ok",
+  confidence: "high",
+  halal: true,
+  note: "",
+};
+
+const ABC_BISTRO: Place = {
+  id: "t3",
+  name: "ABC Bistro Cafe",
+  kind: "Indian",
+  address: "Jalan Ampang, 50450 Kuala Lumpur",
+  lat: 3.1595,
+  lng: 101.7185,
+  km: 1.5,
+  road_km: 1.5,
+  distance_basis: "road",
+  travel_sen: 0,
+  minutes: 25,
+  total_sen: 1300,
+  share: 1300 / ROOM_SEN,
+  band: "ok",
+  confidence: "high",
+  halal: true,
+  note: "",
+};
+
+const TENSION: DayPlanData = {
+  room_sen: ROOM_SEN,
+  cap_sen: ROOM_SEN,
+  nearby_count: 3,
+  matching_count: 3,
+  places: [KENNY_HILLS, GERAI, ABC_BISTRO],
+};
+
 /** The same place with the router silent: ``km`` is the great circle, there is
  *  no road figure to show beside it, and the fare below is priced on the short
  *  one. The real journey behind these numbers is 8.1 km of road. */
@@ -95,6 +169,22 @@ const RESPONSE: DayPlanData = {
   nearby_count: PLACES.length,
   matching_count: PLACES.length,
   places: PLACES,
+};
+
+/** What POST /v1/day-plan/drafts answers with: the draft the server made, with
+ *  the date, the percentage and the note all decided there rather than here. */
+const PLAN_DRAFT: Transaction = {
+  id: "d9",
+  merchant: "Nasi Kandar Pelita",
+  amount_sen: 1250,
+  category: "food",
+  category_label: "Food & drink",
+  occurred_on: "2026-09-03",
+  status: "draft",
+  source: "plan",
+  confidence: 70,
+  note: "Planned, not spent — this is an estimate from your day plan. "
+    + "Nothing counts against today until you confirm it.",
 };
 
 /** A spent-out day, stated the way the API states it — including the counts,
@@ -159,6 +249,27 @@ function removeClipboard() {
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined });
 }
 
+/** The place names down the list, in the order the rows are actually in. */
+function orderedNames(): string[] {
+  return Array.from(document.querySelectorAll<HTMLElement>(".place")).map(
+    (row) => row.querySelector("b")?.textContent ?? "",
+  );
+}
+
+/**
+ * Every figure on each row, keyed by place. The rank and the badge are stripped
+ * out because those *are* the ordering; what is left is the ringgit, the
+ * distance, the minutes and the share, none of which a sort may touch.
+ */
+function figuresByPlace(): Record<string, string> {
+  const rows: Record<string, string> = {};
+  for (const row of document.querySelectorAll<HTMLElement>(".place")) {
+    const name = row.querySelector("b")?.textContent ?? "";
+    rows[name] = (row.textContent ?? "").replace(/^\d+/, "").replace("Best fit", "");
+  }
+  return rows;
+}
+
 async function openSheet(name: string) {
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: new RegExp(name) }));
@@ -168,6 +279,8 @@ async function openSheet(name: string) {
 beforeEach(() => {
   vi.mocked(api.get).mockReset();
   vi.mocked(api.get).mockResolvedValue(RESPONSE);
+  vi.mocked(api.post).mockReset();
+  vi.mocked(api.post).mockResolvedValue(PLAN_DRAFT);
   Reflect.deleteProperty(navigator, "geolocation");
   Reflect.deleteProperty(navigator, "clipboard");
 });
@@ -531,19 +644,284 @@ describe("DayPlan", () => {
     await waitFor(() => expect(lastRequestedUrl()).toContain("lat=3.1577"));
   });
 
-  it("opens a detail sheet with the cost breakdown and adds it to today", async () => {
+  it("opens a detail sheet with the cost breakdown", async () => {
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+
+    const { sheet } = await openSheet("Nasi Kandar Pelita");
+    expect(within(sheet).getAllByText("RM12.50").length).toBeGreaterThan(0);
+    expect(within(sheet).getByText("Meal estimate")).toBeInTheDocument();
+    expect(within(sheet).getByText("650 m by road")).toBeInTheDocument();
+  });
+});
+
+describe("DayPlan · adding a place to today", () => {
+  it("writes a real draft, and says where it went", async () => {
     renderDayPlan();
     await screen.findByText("Nasi Kandar Pelita");
 
     const { user, sheet } = await openSheet("Nasi Kandar Pelita");
-    expect(within(sheet).getAllByText("RM12.50").length).toBeGreaterThan(0);
-    expect(within(sheet).getByText("Meal estimate")).toBeInTheDocument();
-    expect(within(sheet).getByText("650 m by road")).toBeInTheDocument();
+    await user.click(within(sheet).getByRole("button", { name: "Add to today" }));
+
+    expect(api.post).toHaveBeenCalledWith("/v1/day-plan/drafts", {
+      name: "Nasi Kandar Pelita",
+      total_sen: 1250,
+      confidence: "high",
+    });
+    // A toast that named no destination would leave the user with a draft they
+    // have no reason to go looking for.
+    expect(await screen.findByText(/waiting in Activity as a draft/i)).toBeInTheDocument();
+    expect(screen.getByText(/RM12.50 for Nasi Kandar Pelita/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("never says the money has been set aside", async () => {
+    // The prototype's "pencilled in" overstated it: a draft is excluded from
+    // every calculation, so nothing whatsoever has been reserved.
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+
+    const { user, sheet } = await openSheet("Nasi Kandar Pelita");
+    // Said before the tap as well as after it.
+    expect(within(sheet).getByText(/Today's money stays where it is until you confirm it/i))
+      .toBeInTheDocument();
 
     await user.click(within(sheet).getByRole("button", { name: "Add to today" }));
 
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(await screen.findByText(/added to today/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Today's money doesn't change until you confirm it/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/pencilled/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/set aside/i)).not.toBeInTheDocument();
+  });
+
+  it("sends the whole outing, meal and travel together", async () => {
+    // Chee Meng is RM43.00 of food and RM5.00 of fare. RM43.00 is not the
+    // figure on the row, and a draft for it would not be what was tapped.
+    renderDayPlan();
+    await screen.findByText("Chee Meng Chicken Rice");
+
+    const { user, sheet } = await openSheet("Chee Meng Chicken Rice");
+    await user.click(within(sheet).getByRole("button", { name: "Add to today" }));
+
+    expect(api.post).toHaveBeenCalledWith("/v1/day-plan/drafts", {
+      name: "Chee Meng Chicken Rice",
+      total_sen: 4800,
+      // The band, not a percentage: what "medium" is worth is the server's to
+      // decide, so this screen has no mapping of its own to disagree with.
+      confidence: "medium",
+    });
+  });
+
+  it("keeps the sheet open and claims nothing when the add fails", async () => {
+    vi.mocked(api.post).mockRejectedValue(new Error("network down"));
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+
+    const { user, sheet } = await openSheet("Nasi Kandar Pelita");
+    await user.click(within(sheet).getByRole("button", { name: "Add to today" }));
+
+    expect(await within(sheet).findByText(/Nothing was written/i)).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Nasi Kandar Pelita" })).toBeInTheDocument();
+    expect(screen.queryByText(/waiting in Activity as a draft/i)).not.toBeInTheDocument();
+  });
+
+  it("does not carry one place's failure into the next place's sheet", async () => {
+    vi.mocked(api.post).mockRejectedValue(new Error("network down"));
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+
+    const { user, sheet } = await openSheet("Nasi Kandar Pelita");
+    await user.click(within(sheet).getByRole("button", { name: "Add to today" }));
+    await within(sheet).findByText(/Nothing was written/i);
+    await user.click(within(sheet).getByRole("button", { name: "Close" }));
+
+    await user.click(screen.getByRole("button", { name: /Chee Meng Chicken Rice/ }));
+
+    const next = screen.getByRole("dialog", { name: "Chee Meng Chicken Rice" });
+    expect(within(next).queryByText(/Nothing was written/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("DayPlan · the order the list is in", () => {
+  beforeEach(() => {
+    vi.mocked(api.get).mockResolvedValue(TENSION);
+  });
+
+  it("puts the order on the screen, and says what it means", async () => {
+    // A weighting the user cannot see is one they can neither trust nor
+    // overrule, which is how a two-hour walk reached the top of the list.
+    renderDayPlan();
+    await screen.findByText("Kenny Hills Bakers");
+
+    expect(screen.getByRole("radio", { name: "Balanced" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Cheapest" })).not.toBeChecked();
+    expect(screen.getByRole("radio", { name: "Closest" })).not.toBeChecked();
+    expect(screen.getByText(/Cost and travel time count equally/i)).toBeInTheDocument();
+  });
+
+  it("opens on Balanced, which picks the one neither extreme would", async () => {
+    renderDayPlan();
+    await screen.findByText("Kenny Hills Bakers");
+
+    // RM13.00 at 25 minutes, over RM11.00 at 109 and RM18.00 at 8.
+    expect(orderedNames()).toEqual([
+      "ABC Bistro Cafe",
+      "Kenny Hills Bakers",
+      "Gerai Nasi Lemak",
+    ]);
+  });
+
+  it("orders by the whole outing's cost under Cheapest", async () => {
+    renderDayPlan();
+    await screen.findByText("Kenny Hills Bakers");
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("radio", { name: "Cheapest" }));
+
+    expect(orderedNames()).toEqual([
+      "Kenny Hills Bakers",
+      "ABC Bistro Cafe",
+      "Gerai Nasi Lemak",
+    ]);
+    expect(screen.getByText(/Total outing first/i)).toBeInTheDocument();
+  });
+
+  it("orders by travel time under Closest", async () => {
+    renderDayPlan();
+    await screen.findByText("Kenny Hills Bakers");
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("radio", { name: "Closest" }));
+
+    expect(orderedNames()).toEqual([
+      "Gerai Nasi Lemak",
+      "ABC Bistro Cafe",
+      "Kenny Hills Bakers",
+    ]);
+    expect(screen.getByText(/Shortest journey first/i)).toBeInTheDocument();
+  });
+
+  it("re-orders the list it already has, without asking the server again", async () => {
+    // The endpoint sends every place under the ceiling untruncated, so there is
+    // nothing a round trip could add — and a fetch per toggle is a chance for
+    // the figures to move under a control that only claims to reorder them.
+    renderDayPlan();
+    await screen.findByText("Kenny Hills Bakers");
+    const before = vi.mocked(api.get).mock.calls.length;
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("radio", { name: "Cheapest" }));
+    await user.click(screen.getByRole("radio", { name: "Closest" }));
+
+    expect(orderedNames()[0]).toBe("Gerai Nasi Lemak");
+    expect(vi.mocked(api.get).mock.calls.length).toBe(before);
+  });
+
+  it("changes not one figure on any row when the sort changes", async () => {
+    // The blend is a preference about ordering. The ringgit and the minutes are
+    // claims about the world, and no preference is allowed to touch them.
+    renderDayPlan();
+    await screen.findByText("Kenny Hills Bakers");
+    const balanced = figuresByPlace();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("radio", { name: "Cheapest" }));
+    const cheapest = figuresByPlace();
+    await user.click(screen.getByRole("radio", { name: "Closest" }));
+    const closest = figuresByPlace();
+
+    expect(cheapest).toEqual(balanced);
+    expect(closest).toEqual(balanced);
+    // And the figures are the real ones, not something the blend produced.
+    expect(screen.getByText(/Bakery · 7.9 km · 109 min/)).toBeInTheDocument();
+    expect(screen.getByText("RM11.00")).toBeInTheDocument();
+    expect(screen.getByText(/Malay · 150 m · 8 min/)).toBeInTheDocument();
+    expect(screen.getByText("RM18.00")).toBeInTheDocument();
+    expect(screen.getByText(/Indian · 1.5 km · 25 min/)).toBeInTheDocument();
+    expect(screen.getByText("RM13.00")).toBeInTheDocument();
+  });
+
+  it("offers no sort control over a list with nothing to order", async () => {
+    vi.mocked(api.get).mockResolvedValue({ ...TENSION, places: [ABC_BISTRO] });
+    renderDayPlan();
+    await screen.findByText("ABC Bistro Cafe");
+
+    expect(screen.queryByRole("radio", { name: "Cheapest" })).not.toBeInTheDocument();
+  });
+});
+
+describe("DayPlan · what 'Best fit' is allowed to claim", () => {
+  beforeEach(() => {
+    vi.mocked(api.get).mockResolvedValue(TENSION);
+  });
+
+  it("badges the leader when the outing is one a person would actually make", async () => {
+    renderDayPlan();
+    await screen.findByText("Kenny Hills Bakers");
+
+    // ABC Bistro: RM13.00, 25 minutes on foot, and it beat the runner-up
+    // outright rather than tying with it.
+    const badges = screen.getAllByText("Best fit");
+    expect(badges).toHaveLength(1);
+    expect(badges[0]?.closest(".place")?.textContent).toContain("ABC Bistro Cafe");
+  });
+
+  it("badges nothing when the cheapest thing on the list is a two-hour walk", async () => {
+    // The bug, exactly: RM11.00 topped the list on cost and was told it was the
+    // best fit for the day. Nobody walks 109 minutes to save RM2.
+    renderDayPlan();
+    await screen.findByText("Kenny Hills Bakers");
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("radio", { name: "Cheapest" }));
+
+    expect(orderedNames()[0]).toBe("Kenny Hills Bakers");
+    expect(screen.queryByText("Best fit")).not.toBeInTheDocument();
+    // Still listed, still priced, still addable — only uncrowned.
+    expect(screen.getByText("RM11.00")).toBeInTheDocument();
+  });
+
+  it("badges the leader under Closest, which is a walk anyone would take", async () => {
+    renderDayPlan();
+    await screen.findByText("Kenny Hills Bakers");
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("radio", { name: "Closest" }));
+
+    const badges = screen.getAllByText("Best fit");
+    expect(badges).toHaveLength(1);
+    expect(badges[0]?.closest(".place")?.textContent).toContain("Gerai Nasi Lemak");
+  });
+
+  it("badges nothing when the leader only tied for first", async () => {
+    // Two outings at the same price are equally the cheapest, and picking one
+    // of them to crown is the arbitrary choice the old "row one" badge made.
+    vi.mocked(api.get).mockResolvedValue({
+      ...TENSION,
+      places: [ABC_BISTRO, { ...GERAI, total_sen: ABC_BISTRO.total_sen }],
+    });
+    renderDayPlan();
+    await screen.findByText("ABC Bistro Cafe");
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("radio", { name: "Cheapest" }));
+
+    expect(screen.queryByText("Best fit")).not.toBeInTheDocument();
+  });
+
+  it("badges nothing that does not fit today", async () => {
+    // "Over" and "Best fit" on the same row contradict each other, and on a
+    // spent-out day every place is over.
+    vi.mocked(api.get).mockResolvedValue({
+      ...TENSION,
+      places: TENSION.places.map((place) => ({ ...place, share: null, band: "over" as const })),
+    });
+    renderDayPlan();
+    await screen.findByText("Kenny Hills Bakers");
+
+    expect(screen.queryByText("Best fit")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Over").length).toBe(3);
   });
 });
 

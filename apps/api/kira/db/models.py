@@ -32,6 +32,12 @@ SOURCE_MANUAL = "manual"
 SOURCE_RECEIPT = "receipt"
 SOURCE_VOICE = "voice"
 SOURCE_IMPORT = "import"
+# The odd one out, and deliberately so: the four above are all a record of money
+# that has already left, read by a machine or typed by hand. A plan is money the
+# user intends to spend. It is a draft for the same reason the others are — it
+# is a proposal, not a fact — but the proposal is about the future, so the copy
+# that carries it must never suggest the money is already gone or set aside.
+SOURCE_PLAN = "plan"
 
 HORIZON_SHORT = "short"
 HORIZON_LONG = "long"

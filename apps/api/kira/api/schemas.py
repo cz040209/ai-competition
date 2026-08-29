@@ -119,6 +119,26 @@ class DayPlanResponse(ResponseModel):
     places: list[PlaceResponse]
 
 
+class PlanDraftRequest(BaseModel):
+    """A place the user tapped "Add to today" on, as the row showed it.
+
+    ``total_sen`` is the whole outing — meal plus travel — because that is the
+    single figure on the row and in the sheet's total. Sending the meal alone
+    would put a draft on screen that is not the thing the user added.
+
+    ``confidence`` is the place's own band, not a percentage: what "high" is
+    worth is the server's to decide, so two clients cannot come to different
+    answers about it. It is typed as a plain string rather than an enum because
+    the bands come from a curated data file that is regenerated, and a word this
+    build has not seen should cost the user their tap the least — the service
+    reads an unfamiliar one as the least certain band.
+    """
+
+    name: str = Field(min_length=1, max_length=120)
+    total_sen: int = Field(gt=0)
+    confidence: str = Field(min_length=1, max_length=16)
+
+
 class DashboardTodayResponse(ResponseModel):
     date: date
     display_name: str
@@ -264,3 +284,18 @@ class CreateTransactionRequest(BaseModel):
     source: str = Field(default="manual", max_length=12)
     confidence: int | None = Field(default=None, ge=0, le=100)
     note: str = Field(default="", max_length=280)
+
+
+class CorrectTransactionRequest(BaseModel):
+    """What the user says a draft should have read. Every field is optional.
+
+    Omitted means "leave it alone", which is why nothing here defaults to a
+    value: a body carrying only ``amount_sen`` must not blank the merchant.
+    ``confidence`` is absent on purpose — it is the reader's own figure, and a
+    corrected amount clears it rather than letting a client restate it.
+    """
+
+    merchant: str | None = Field(default=None, min_length=1, max_length=120)
+    amount_sen: int | None = Field(default=None, gt=0)
+    category: str | None = Field(default=None, max_length=40)
+    note: str | None = Field(default=None, max_length=280)
