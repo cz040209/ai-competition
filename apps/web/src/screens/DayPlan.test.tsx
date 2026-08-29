@@ -403,7 +403,11 @@ describe("DayPlan", () => {
 
     await user.click(screen.getByRole("button", { name: "Use my location" }));
 
-    expect(await screen.findByText(/Location is blocked for this site/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Location is blocked/i)).toBeInTheDocument();
+    // PERMISSION_DENIED does not say who denied it, and a site permission
+    // reading "allowed" while the system withholds it is a real case, so the
+    // advice must not send anyone to just one of the two settings pages.
+    expect(screen.getByText(/your system withholding it/i)).toBeInTheDocument();
     expect(screen.getByText(/planning from KLCC/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Location blocked" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Use my location" })).not.toBeInTheDocument();
@@ -418,8 +422,8 @@ describe("DayPlan", () => {
     await user.click(screen.getByRole("button", { name: "Use my location" }));
 
     // Different cause, different advice: settings for a block, another tap here.
-    expect(await screen.findByText(/took longer than 8 seconds/i)).toBeInTheDocument();
-    expect(screen.queryByText(/blocked for this site/i)).not.toBeInTheDocument();
+    expect(await screen.findByText(/took longer than 15 seconds/i)).toBeInTheDocument();
+    expect(screen.queryByText(/your system withholding it/i)).not.toBeInTheDocument();
     const chip = screen.getByRole("button", { name: "Location timed out" });
     expect(chip).toBeEnabled();
 

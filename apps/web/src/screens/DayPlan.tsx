@@ -28,6 +28,11 @@ const CAP_STEP_SEN = 50;
 type LocFailure = "unsupported" | "blocked" | "unavailable" | "timeout";
 type LocState = "idle" | "asking" | "ok" | LocFailure;
 
+// A cold fix on a laptop is a Wi-Fi scan, not a GPS read, and eight seconds
+// was not enough for one in practice. Derived into the copy below so the number
+// on screen cannot drift from the number actually waited.
+const LOCATE_TIMEOUT_MS = 15_000;
+
 // A failed locate that leaves the chip reading exactly as it did before the tap
 // is indistinguishable from never having tapped, so each reason gets its own
 // label and its own advice: a blocked permission needs the browser's settings
@@ -40,8 +45,14 @@ const LOC_FAILURES: Record<LocFailure, { chip: string; reason: string; advice: s
   },
   blocked: {
     chip: "Location blocked",
-    reason: "Location is blocked for this site",
-    advice: "Allow it in your browser settings, then tap again.",
+    // PERMISSION_DENIED does not say who denied it. The site's own permission
+    // can read "allowed" while the system withholds location from the browser
+    // itself, and sending someone to a settings page that already says yes is
+    // its own small lie -- so name both places rather than guess between them.
+    reason: "Location is blocked",
+    advice:
+      "That may be this site's permission or your system withholding it from the browser, "
+      + "so check both, then tap again.",
   },
   unavailable: {
     chip: "Location unavailable",
@@ -50,7 +61,7 @@ const LOC_FAILURES: Record<LocFailure, { chip: string; reason: string; advice: s
   },
   timeout: {
     chip: "Location timed out",
-    reason: "Locating took longer than 8 seconds",
+    reason: `Locating took longer than ${LOCATE_TIMEOUT_MS / 1000} seconds`,
     advice: "Tap again to retry.",
   },
 };
@@ -319,7 +330,7 @@ export function DayPlan() {
         setLocState("ok");
       },
       (error) => setLocState(failureFor(error.code)),
-      { timeout: 8000, maximumAge: 60000 },
+      { timeout: LOCATE_TIMEOUT_MS, maximumAge: 60000 },
     );
   };
 

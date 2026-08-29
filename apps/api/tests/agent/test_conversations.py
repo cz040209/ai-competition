@@ -162,3 +162,35 @@ class TestAttachments:
     async def test_without_an_attachment_it_says_so(self, session, butler, today):
         result = await ask(session, butler, today, "What did that receipt say?")
         assert dict(result.evidence)["Attachment"] == "none on this message"
+
+
+class TestWhereToEat:
+    """The day planner, reached by asking rather than by tapping.
+
+    The offline model is the one the demo runs on -- the container carries no
+    API key -- so without a route here the Butler answers "where can I eat"
+    with today's balance and never touches the planner at all.
+    """
+
+    async def test_it_reaches_the_day_planner(self, session, butler, today):
+        result = await ask(session, butler, today, "Where can I eat nearby today?")
+        assert result.tools_used == ["build_day_plan"]
+
+    async def test_a_question_naming_an_amount_still_goes_to_affordability(
+        self, session, butler, today
+    ):
+        # "Can I afford RM60 dinner" is a question about money, not a request
+        # for somewhere to go, and must not be answered with a list of shops.
+        result = await ask(session, butler, today, "Can I afford RM60 dinner tonight?")
+        assert result.tools_used == ["calculate_safe_to_spend"]
+
+    async def test_the_evidence_states_the_room_it_judged_against(
+        self, session, butler, today
+    ):
+        result = await ask(session, butler, today, "Where should I eat?")
+        assert dict(result.evidence)["Safe to spend today"] == "RM52.97"
+
+    async def test_the_answer_names_a_place_and_a_price(self, session, butler, today):
+        result = await ask(session, butler, today, "I'm hungry, where should I go?")
+        assert "RM" in result.answer
+        assert "estimate" in result.answer.lower()

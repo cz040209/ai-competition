@@ -240,6 +240,55 @@ def _stated(text: str) -> str:
     return (fact[:1].upper() + fact[1:])[:280] if fact else text.strip()[:280]
 
 
+def _compose_places(messages: Sequence[BaseMessage], text: str) -> str:
+    result = _payload(messages, "build_day_plan") or {}
+    places = result.get("places") or []
+
+    # An empty list has three different causes and the offline answer must not
+    # blame the wrong one, exactly as the screen must not. The counts nest:
+    # nothing in range, nothing halal in range, nothing under today's room.
+    if not places:
+        if result.get("nearby_count") == 0:
+            return (
+                "Nothing I know of is within range of there. My set of places only "
+                "covers central KL, so that is a gap in what I have been given, not "
+                "a verdict on what is open."
+            )
+        if result.get("matching_count") == 0:
+            return (
+                "There are places within range, but none I can confirm are halal, so "
+                "I have left them out. Say the word and I will show them anyway."
+            )
+        return (
+            f"There are places nearby, but none under {_rm(result.get('cap_sen'))}. "
+            "That is what today has room for, not what the food is worth."
+        )
+
+    best = places[0]
+    head = (
+        f"{best.get('name')} — {_rm(best.get('total_sen'))} for the whole outing, "
+        f"meal and travel together."
+    )
+    share = best.get("share")
+    if share:
+        head += f" That is about {round(share * 100)}% of today's room."
+
+    others = places[1:3]
+    if others:
+        listed = ", ".join(f"{p.get('name')} at {_rm(p.get('total_sen'))}" for p in others)
+        tail = f"After that: {listed}."
+    else:
+        tail = "That is the only one that fits."
+
+    # Never let the prose imply a precision the distance did not have.
+    if best.get("distance_basis") == "straight_line":
+        tail += (
+            " I could not reach the router, so those distances are straight lines "
+            "and the real journey will be longer."
+        )
+    return f"{head} {tail} Every price is an estimate, never a quoted menu price."
+
+
 ROUTES: tuple[Route, ...] = (
     Route(
         "attachment",
@@ -279,6 +328,20 @@ ROUTES: tuple[Route, ...] = (
             "calculate_safe_to_spend": _afford_args(text, attachment)
         },
         compose=_compose_afford,
+    ),
+    # After "afford", so a question naming an amount still gets tested against
+    # today's room rather than answered with a list of restaurants.
+    Route(
+        "places",
+        re.compile(
+            r"where.*(?:eat|lunch|dinner|breakfast|food|makan)"
+            r"|(?:somewhere|place|places|spot)s? to eat"
+            r"|what can i eat|where should i (?:eat|go)|makan|hungry"
+            r"|(?:eat|food|lunch|dinner).*(?:nearby|near me|around here)",
+            re.I,
+        ),
+        ("build_day_plan",),
+        compose=_compose_places,
     ),
     Route(
         "drop",
