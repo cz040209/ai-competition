@@ -5,6 +5,7 @@ import type {
   CaptureAvailability,
   Category,
   DashboardToday,
+  ForesightResponse,
   Memory,
   TokenResponse,
   Transaction,
@@ -15,12 +16,24 @@ import { api } from "./client";
 
 export const dashboardTodayKey = ["dashboard", "today"] as const;
 export const activityKey = ["transactions"] as const;
+export const foresightKey = ["foresight"] as const;
 const activityKeyFor = (category: string | null) => [...activityKey, category] as const;
 
 export function useDashboardToday(enabled: boolean) {
   return useQuery({
     queryKey: dashboardTodayKey,
     queryFn: () => api.get<DashboardToday>("/v1/dashboard/today"),
+    enabled,
+  });
+}
+
+export function useForesight(enabled: boolean, horizon?: number) {
+  return useQuery({
+    queryKey: [...foresightKey, horizon ?? "default"],
+    queryFn: () =>
+      api.get<ForesightResponse>(
+        horizon === undefined ? "/v1/foresight" : `/v1/foresight?horizon=${horizon}`,
+      ),
     enabled,
   });
 }

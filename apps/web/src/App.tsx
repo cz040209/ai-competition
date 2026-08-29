@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 
+import type { ForesightDriver } from "@kira/contracts";
+
 import {
   useActivity,
   useButlerThread,
@@ -7,6 +9,7 @@ import {
   useDashboardToday,
   useDiscardDraft,
   useCategories,
+  useForesight,
   useMemories,
   useUnconfirm,
 } from "./api/hooks";
@@ -20,7 +23,7 @@ import { Activity } from "./screens/Activity";
 import { Butler } from "./screens/Butler";
 import { Login } from "./screens/Login";
 import { More } from "./screens/More";
-import { Placeholder } from "./screens/Placeholder";
+import { Plan } from "./screens/Plan";
 import { Today } from "./screens/Today";
 
 export type Tab = "today" | "activity" | "butler" | "plan" | "more";
@@ -40,6 +43,7 @@ export function App() {
   const viewRef = useRef<HTMLDivElement>(null);
   const screenRef = useRef<HTMLDivElement>(null);
   const dashboard = useDashboardToday(signedIn);
+  const foresight = useForesight(signedIn && tab === "plan");
   const [category, setCategory] = useState<string | null>(null);
   const activity = useActivity(signedIn && tab === "activity", category);
   // The thread is fetched once the user signs in, not on first open: the
@@ -88,6 +92,20 @@ export function App() {
     const to = TABS.indexOf(next);
     setDir(next === "butler" || tab === "butler" ? 0 : to > from ? 1 : -1);
     setTab(next);
+  };
+
+  const proposeDriver = (driver: ForesightDriver) => {
+    const amount = `RM${(Math.abs(driver.lever.delta.sen) / 100).toFixed(2)}`;
+    const goal = dashboard.data?.goals.find((item) => item.id === driver.lever.target_id);
+    const revisedMonthly = goal ? goal.monthly_sen + driver.lever.delta.sen : null;
+    const text =
+      driver.lever.kind === "goal_monthly" && goal && revisedMonthly !== null
+        ? `Please propose setting my monthly savings for ${goal.name} to RM${(revisedMonthly / 100).toFixed(2)}. Show me the approval card; do not apply anything yet.`
+        : driver.lever.kind === "commitment_amount"
+          ? `Please help me propose reducing this commitment by ${amount}. Show me the approval card; do not apply anything yet.`
+          : `Help me make a plan to spend ${amount} less each day. Do not change anything yet.`;
+    setPending({ text });
+    go("butler");
   };
 
   const dark = tab === "butler";
@@ -168,7 +186,13 @@ export function App() {
                     />
                   )}
                   {signedIn && tab === "plan" && (
-                    <Placeholder title="Plan" blurb="Goals, scenarios, and the day planner." week="3" />
+                    <Plan
+                      data={foresight.data}
+                      goals={dashboard.data?.goals}
+                      isLoading={foresight.isLoading}
+                      isError={foresight.isError}
+                      onDriver={proposeDriver}
+                    />
                   )}
                   {signedIn && tab === "more" && (
                     <More memories={memories.data} isLoading={memories.isLoading} />

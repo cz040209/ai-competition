@@ -65,6 +65,25 @@ const ACTIVITY = {
   categories: [{ slug: "transport", label: "Transport", spent_this_cycle_sen: 1620, count: 1 }],
 };
 
+const FORESIGHT = {
+  horizon_days: 180,
+  dates: ["2026-09-04", "2027-03-02"],
+  p10: [{ sen: 400000, currency: "MYR" }, { sen: 170000, currency: "MYR" }],
+  p50: [{ sen: 425000, currency: "MYR" }, { sen: 350000, currency: "MYR" }],
+  p90: [{ sen: 440000, currency: "MYR" }, { sen: 560000, currency: "MYR" }],
+  outlooks: [
+    {
+      goal_id: "g1",
+      target_date: "2027-02-15",
+      probability_bp: 6200,
+      median_shortfall: { sen: 30000, currency: "MYR" },
+    },
+  ],
+  drivers: [],
+  profile_days: 90,
+  assumption: "Based on your last 90 days of confirmed spending. It is a projection, not a promise.",
+};
+
 /** Mutable so a test can prove the screens re-read after a confirm. */
 let activity = ACTIVITY;
 let dashboard = DASHBOARD;
@@ -122,6 +141,12 @@ beforeEach(() => {
       }
       if (url.endsWith("/v1/dashboard/today")) {
         return new Response(JSON.stringify(dashboard), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/v1/foresight")) {
+        return new Response(JSON.stringify(FORESIGHT), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
@@ -232,7 +257,7 @@ describe("App", () => {
     await user.click(await screen.findByRole("button", { name: /sign in/i }));
     await user.click(await screen.findByRole("button", { name: /^Plan$/i }));
 
-    await waitFor(() => expect(screen.getByText(/Coming in week/i)).toBeInTheDocument());
+    expect(await screen.findByText("The road ahead")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Today$/i })).toBeInTheDocument();
   });
 });
