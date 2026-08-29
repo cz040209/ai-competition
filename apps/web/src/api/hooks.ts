@@ -1,5 +1,6 @@
 import type {
   Activity,
+  BriefingInboxResponse,
   ButlerThread,
   Capture,
   CaptureAvailability,
@@ -17,6 +18,7 @@ import { api } from "./client";
 export const dashboardTodayKey = ["dashboard", "today"] as const;
 export const activityKey = ["transactions"] as const;
 export const foresightKey = ["foresight"] as const;
+export const briefingTodayKey = ["briefings", "today"] as const;
 const activityKeyFor = (category: string | null) => [...activityKey, category] as const;
 
 export function useDashboardToday(enabled: boolean) {
@@ -34,6 +36,14 @@ export function useForesight(enabled: boolean, horizon?: number) {
       api.get<ForesightResponse>(
         horizon === undefined ? "/v1/foresight" : `/v1/foresight?horizon=${horizon}`,
       ),
+    enabled,
+  });
+}
+
+export function useBriefingToday(enabled: boolean) {
+  return useQuery({
+    queryKey: briefingTodayKey,
+    queryFn: () => api.get<BriefingInboxResponse | null>("/v1/briefings/today"),
     enabled,
   });
 }

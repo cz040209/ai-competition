@@ -6,7 +6,7 @@ import json
 from datetime import date
 from functools import lru_cache
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -44,6 +44,13 @@ class Settings(BaseSettings):
     capture_voice_enabled: bool = True
     capture_max_bytes: int = 8 * 1024 * 1024
 
+    # The scheduler is a separate process and stores its job metadata in the
+    # same Postgres database. Asia/Kuala_Lumpur is explicit: daily financial
+    # advice must not shift with the server's timezone.
+    worker_timezone: str = "Asia/Kuala_Lumpur"
+    worker_hour: int = Field(default=5, ge=0, le=23)
+    worker_minute: int = Field(default=0, ge=0, le=59)
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _split_origins(cls, value: object) -> object:
@@ -67,6 +74,11 @@ class Settings(BaseSettings):
         Same database, second driver: the SQLAlchemy dialect suffix has to go.
         """
         return self.database_url.replace("+asyncpg", "").replace("+psycopg", "")
+
+    @property
+    def scheduler_database_url(self) -> str:
+        """A synchronous SQLAlchemy URL for APScheduler's persistent job store."""
+        return self.database_url.replace("+asyncpg", "+psycopg")
 
 
 @lru_cache

@@ -195,6 +195,46 @@ describe("Butler", () => {
     expect(screen.getByText("Where do I stand?")).toBeInTheDocument();
     expect(screen.getByText("RM4,180.40")).toBeInTheDocument();
   });
+
+  it("shows every prepared morning approval, not just the last one", () => {
+    setup({
+      ...EMPTY_THREAD,
+      messages: [
+        {
+          id: "m1",
+          role: "kira",
+          content: "Your overnight money check is ready.",
+          evidence: [],
+          attachment: null,
+          created_at: "2026-09-03T04:00:00Z",
+        },
+      ],
+      pending_approvals: [
+        {
+          id: "a1",
+          thread_id: "t1",
+          tool: "confirm_draft",
+          args: { transaction_id: "d1" },
+          summary: "Confirm Nasi Kandar Pelita for MYR 18.90.",
+          evidence: [],
+          status: "pending",
+          created_at: "2026-09-03T04:00:00Z",
+        },
+        {
+          id: "a2",
+          thread_id: "t1",
+          tool: "confirm_draft",
+          args: { transaction_id: "d2" },
+          summary: "Confirm Grab for MYR 14.00.",
+          evidence: [],
+          status: "pending",
+          created_at: "2026-09-03T04:00:00Z",
+        },
+      ],
+    });
+
+    expect(screen.getAllByRole("button", { name: "Approve" })).toHaveLength(2);
+  });
 });
 
 describe("Butler approvals", () => {

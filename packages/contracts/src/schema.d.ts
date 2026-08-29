@@ -432,6 +432,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/briefings/today": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Today Briefing
+         * @description The prepared morning inbox, if the nightly worker has run already.
+         */
+        get: operations["get_today_briefing_v1_briefings_today_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/briefings/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run Briefing
+         * @description Run today's worker path now. A retry returns the original briefing.
+         */
+        post: operations["run_briefing_v1_briefings_run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -482,6 +522,44 @@ export interface components {
         Body_read_voice_v1_capture_voice_post: {
             /** Audio */
             audio: string;
+        };
+        /** BriefingInboxResponse */
+        BriefingInboxResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * On Date
+             * Format: date
+             */
+            on_date: string;
+            /** Summary */
+            summary: string;
+            /** Proposal Count */
+            proposal_count: number;
+            /** Pending Proposal Count */
+            pending_proposal_count: number;
+        };
+        /** BriefingRunResponse */
+        BriefingRunResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * On Date
+             * Format: date
+             */
+            on_date: string;
+            /** Summary */
+            summary: string;
+            /** Proposal Count */
+            proposal_count: number;
+            /** Created */
+            created: boolean;
         };
         /** ButlerApprovalResponse */
         ButlerApprovalResponse: {
@@ -1713,6 +1791,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_today_briefing_v1_briefings_today_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BriefingInboxResponse"] | null;
+                };
+            };
+        };
+    };
+    run_briefing_v1_briefings_run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BriefingRunResponse"];
                 };
             };
         };

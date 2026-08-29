@@ -290,3 +290,19 @@ class DailyAdvice(Base):
     snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
     source: Mapped[str] = mapped_column(String(8), default=ADVICE_SOURCE_WORKER)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class Briefing(Base):
+    """One idempotent overnight briefing per user and local calendar day."""
+
+    __tablename__ = "briefings"
+    __table_args__ = (UniqueConstraint("user_id", "on_date", name="uq_briefings_user_date"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=_uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    on_date: Mapped[date] = mapped_column(Date, index=True)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    proposal_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

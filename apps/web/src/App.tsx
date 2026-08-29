@@ -5,6 +5,7 @@ import type { ForesightDriver } from "@kira/contracts";
 import {
   useActivity,
   useButlerThread,
+  useBriefingToday,
   useConfirmDraft,
   useDashboardToday,
   useDiscardDraft,
@@ -43,6 +44,7 @@ export function App() {
   const viewRef = useRef<HTMLDivElement>(null);
   const screenRef = useRef<HTMLDivElement>(null);
   const dashboard = useDashboardToday(signedIn);
+  const briefing = useBriefingToday(signedIn);
   const foresight = useForesight(signedIn && tab === "plan");
   const [category, setCategory] = useState<string | null>(null);
   const activity = useActivity(signedIn && tab === "activity", category);
@@ -159,6 +161,7 @@ export function App() {
                       data={dashboard.data}
                       isLoading={dashboard.isLoading}
                       isError={dashboard.isError}
+                      briefing={briefing.data}
                       go={go}
                     />
                   )}

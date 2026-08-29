@@ -4,7 +4,13 @@ import type { ButlerThread, Capture, Category } from "@kira/contracts";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { ask, decide, type ButlerEvent, type EvidenceRow } from "../api/butler";
-import { activityKey, butlerThreadKey, dashboardTodayKey, memoriesKey } from "../api/hooks";
+import {
+  activityKey,
+  briefingTodayKey,
+  butlerThreadKey,
+  dashboardTodayKey,
+  memoriesKey,
+} from "../api/hooks";
 import { IcArrow, IcCam, IcImg, IcMic } from "../components/Icons";
 import { ScanSheet } from "../components/ScanSheet";
 import { VoiceSheet } from "../components/VoiceSheet";
@@ -25,6 +31,7 @@ type Turn = {
   evidence: EvidenceRow[];
   attachment?: Attachment;
   approval?: Proposal | null;
+  approvals?: Proposal[];
   applied?: boolean;
 };
 
@@ -75,22 +82,22 @@ export function Butler({
   useEffect(() => {
     if (!thread || loaded.current) return;
     loaded.current = true;
-    const pending = thread.pending_approvals.at(-1);
+    const pending = thread.pending_approvals;
     setTurns(
       thread.messages.map((message, index) => ({
         role: message.role === "user" ? "user" : "kira",
         text: message.content,
         evidence: message.evidence as EvidenceRow[],
         attachment: (message.attachment as Attachment) ?? null,
-        approval:
-          pending && index === thread.messages.length - 1 && message.role !== "user"
-            ? {
-                id: pending.id,
-                summary: pending.summary,
-                tool: pending.tool,
-                args: pending.args as Record<string, unknown>,
-              }
-            : null,
+        approvals:
+          index === thread.messages.length - 1 && message.role !== "user"
+            ? pending.map((approval) => ({
+                id: approval.id,
+                summary: approval.summary,
+                tool: approval.tool,
+                args: approval.args as Record<string, unknown>,
+              }))
+            : [],
       })),
     );
   }, [thread]);
@@ -131,6 +138,7 @@ export function Butler({
       queryClient.invalidateQueries({ queryKey: activityKey }),
       queryClient.invalidateQueries({ queryKey: memoriesKey }),
       queryClient.invalidateQueries({ queryKey: butlerThreadKey }),
+      queryClient.invalidateQueries({ queryKey: briefingTodayKey }),
     ]);
   };
 
@@ -204,7 +212,11 @@ export function Butler({
   ) => {
     if (live) return;
     setTurns((previous) =>
-      previous.map((turn) => (turn.approval?.id === id ? { ...turn, approval: null } : turn)),
+      previous.map((turn) => ({
+        ...turn,
+        approval: turn.approval?.id === id ? null : turn.approval,
+        approvals: turn.approvals?.filter((approval) => approval.id !== id),
+      })),
     );
     void consume(decide({ id }, action, args));
   };
@@ -251,14 +263,15 @@ export function Butler({
             <div className="bubble-kira" key={index}>
               <Answer text={turn.text} />
               <Evidence rows={turn.evidence} />
-              {turn.approval && (
+              {[...(turn.approvals ?? []), ...(turn.approval ? [turn.approval] : [])].map((proposal) => (
                 <Approval
-                  proposal={turn.approval}
+                  key={proposal.id}
+                  proposal={proposal}
                   categories={categories}
                   busy={busy}
-                  onDecide={(action, args) => respond(turn.approval!.id, action, args)}
+                  onDecide={(action, args) => respond(proposal.id, action, args)}
                 />
-              )}
+              ))}
             </div>
           ),
         )}

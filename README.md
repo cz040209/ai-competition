@@ -9,6 +9,10 @@ integer sen, the day planner knows KL.
 docker compose up --build
 ```
 
+That starts both the API and a separate KL-time nightly briefing worker. You
+can run the same idempotent briefing manually with `POST /v1/briefings/run`
+after signing in.
+
 Then open <http://localhost:8001> and sign in as `demo@kira.app` /
 `demo-money-butler`. Today should read **RM52.97**.
 

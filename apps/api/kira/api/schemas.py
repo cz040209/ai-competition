@@ -268,3 +268,19 @@ class ScenarioResultOut(ResponseModel):
 
 class ScenarioComparisonResponse(ResponseModel):
     results: list[ScenarioResultOut]
+
+
+class BriefingRunResponse(ResponseModel):
+    id: uuid.UUID
+    on_date: date
+    summary: str
+    proposal_count: int
+    created: bool
+
+
+class BriefingInboxResponse(ResponseModel):
+    id: uuid.UUID
+    on_date: date
+    summary: str
+    proposal_count: int
+    pending_proposal_count: int

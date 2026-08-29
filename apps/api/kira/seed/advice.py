@@ -30,6 +30,7 @@ from kira.db.models import (
 from kira.engine import safe_to_spend
 from kira.engine.types import CommitmentInput, GoalInput, Snapshot
 from kira.money import Money
+from kira.services.advice import snapshot_json
 
 
 def cycle_for(
@@ -56,25 +57,6 @@ def _due_in_cycle(due_date: date, cycle_start: date, cycle_days: int) -> date:
     while due < cycle_start:
         due += step
     return due
-
-
-def snapshot_json(snapshot: Snapshot) -> dict:
-    """The exact engine input, as plain JSON, so a past answer can be re-derived."""
-    return {
-        "balance": snapshot.balance.sen,
-        "buffer": snapshot.buffer.sen,
-        "spent_today": snapshot.spent_today.sen,
-        "income": snapshot.income.sen,
-        "today": snapshot.today.isoformat(),
-        "next_payday": snapshot.next_payday.isoformat(),
-        "cycle_start": snapshot.cycle_start.isoformat(),
-        "cycle_days": snapshot.cycle_days,
-        "commitments": [
-            {"id": c.id, "amount": c.amount.sen, "due_date": c.due_date.isoformat()}
-            for c in snapshot.commitments
-        ],
-        "goals": [{"id": g.id, "monthly": g.monthly.sen} for g in snapshot.goals],
-    }
 
 
 async def backfill_advice(

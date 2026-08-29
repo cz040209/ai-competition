@@ -120,6 +120,12 @@ beforeEach(() => {
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
+      if (url.endsWith("/v1/briefings/today")) {
+        return new Response(JSON.stringify(null), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
       if (url.endsWith("/v1/categories")) {
         return new Response(JSON.stringify([{ slug: "food", label: "Food & drink" }]), {
           status: 200,
