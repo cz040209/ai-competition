@@ -45,6 +45,7 @@ def build(spec: dict) -> tuple[Snapshot, DailySpendProfile]:
     profile = DailySpendProfile(
         by_weekday=tuple(tuple(day) for day in spec["profile"]),
         lookback_days=spec["lookback_days"],
+        series=tuple(spec.get("series", ())),
     )
     return snapshot, profile
 

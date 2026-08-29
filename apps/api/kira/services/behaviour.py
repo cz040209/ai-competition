@@ -60,10 +60,12 @@ async def build_profile(
         totals[row.occurred_on] = totals.get(row.occurred_on, 0) + row.amount.sen
 
     buckets: list[list[int]] = [[] for _ in range(7)]
-    for on, total in sorted(totals.items()):
+    ordered = sorted(totals.items())
+    for on, total in ordered:
         buckets[on.weekday()].append(total)
 
     return DailySpendProfile(
         by_weekday=tuple(tuple(bucket) for bucket in buckets),
         lookback_days=lookback_days,
+        series=tuple(total for _, total in ordered),
     )

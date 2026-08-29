@@ -110,6 +110,9 @@ def project(snapshot: Snapshot, profile: DailySpendProfile, days: int) -> Projec
 
 
 DEFAULT_TRIALS = 2000
+# One week: long enough to carry a payday-to-payday rhythm, short enough that
+# ninety days of history still offer many distinct blocks to draw from.
+_BLOCK_DAYS = 7
 DEFAULT_SEED = 20260828
 
 _P10, _P50, _P90 = 10, 50, 90
@@ -150,6 +153,11 @@ def simulate(
     actually spent on that weekday — no fitted distribution, no assumption of
     symmetry, and no float anywhere in the arithmetic.
 
+    Where the profile carries its chronology, the draw is a **block bootstrap**:
+    a random run of consecutive observed days is replayed a week at a time, so
+    the autocorrelation in real spending survives into the horizon instead of
+    averaging out. Independent daily draws understate how wrong a plan can go.
+
     A goal is funded out of what is actually there: each day it takes its daily
     accrual from the balance above the buffer, less whatever this projection has
     already earmarked. Money set aside cannot be set aside twice, and a month
@@ -172,14 +180,23 @@ def simulate(
     shortfalls: dict[str, list[int]] = {goal.id: [] for goal in goals}
     met: dict[str, int] = {goal.id: 0 for goal in goals}
 
+    series = profile.series
+    block = _BLOCK_DAYS if len(series) > _BLOCK_DAYS else 0
+
     stream = Prng(seed)
     for _ in range(trials):
         balance = snapshot.balance.sen
         saved = {goal.id: goal.saved.sen for goal in goals}
         earmarked = 0
+        cursor = 0
         for index, day in enumerate(median.days):
-            observed = profile.by_weekday[day.on.weekday()]
-            spend = observed[stream.below(len(observed))] if observed else 0
+            if block:
+                if index % block == 0:
+                    cursor = stream.below(len(series) - block + 1)
+                spend = series[cursor + index % block]
+            else:
+                observed = profile.by_weekday[day.on.weekday()]
+                spend = observed[stream.below(len(observed))] if observed else 0
             balance += day.income.sen - day.commitments_due.sen - spend
             closings[index].append(balance)
 
@@ -255,7 +272,8 @@ def apply_lever(
         tuple(max(0, amount + lever.delta.sen) for amount in day)
         for day in profile.by_weekday
     )
-    return snapshot, replace(profile, by_weekday=shifted)
+    shifted_series = tuple(max(0, amount + lever.delta.sen) for amount in profile.series)
+    return snapshot, replace(profile, by_weekday=shifted, series=shifted_series)
 
 
 def run_scenarios(

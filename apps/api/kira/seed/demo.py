@@ -35,9 +35,10 @@ DEMO_CYCLE_START = date(2026, 8, 26)
 # Ninety days back from DEMO_TODAY: enough history for a behaviour profile to
 # be a pattern rather than a rumour.
 DEMO_HISTORY_START = date(2026, 6, 5)
-# RM4,500. The prototype's person is tight — RM52.97 a day — and an income that
-# left a comfortable monthly surplus would forecast a different person.
-DEMO_MONTHLY_INCOME = 450000
+# RM5,200. The prototype's person is tight — RM52.97 a day — and this is what
+# their own ledger costs: RM2,003 of commitments and RM2,719 of spending a
+# month, leaving barely enough for the goals they have set themselves.
+DEMO_MONTHLY_INCOME = 520000
 
 COMMITMENTS = (
     ("Rent", 120000, date(2026, 9, 5), True),
@@ -54,7 +55,7 @@ GOALS = (
         250000,
         115000,
         27000,
-        date(2027, 1, 31),
+        date(2027, 2, 15),
         "Three weeks of expenses, kept separate from the buffer.",
     ),
     (

@@ -73,6 +73,15 @@ class TestApplyLever:
         _, profile = apply_lever(snapshot(), VARIED, Lever("daily_spend", "all", Money(-9999)))
         assert profile.by_weekday[0] == (0, 0, 0)
 
+    def test_a_daily_spend_lever_shifts_the_chronology_used_by_block_bootstrap(self):
+        profile = DailySpendProfile(
+            by_weekday=tuple((1000,) for _ in range(7)),
+            lookback_days=14,
+            series=(1000,) * 14,
+        )
+        _, moved = apply_lever(snapshot(), profile, Lever("daily_spend", "all", Money(-500)))
+        assert moved.series == (500,) * 14
+
     def test_neither_argument_is_mutated(self):
         original = snapshot()
         apply_lever(original, VARIED, Lever("goal_monthly", "g1", Money(4000)))

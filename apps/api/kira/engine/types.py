@@ -94,6 +94,11 @@ class DailySpendProfile:
 
     by_weekday: tuple[tuple[int, ...], ...]
     lookback_days: int
+    # The same days in the order they happened. Spending is autocorrelated — a
+    # heavy week follows a heavy week — and independent daily draws average that
+    # away, which understates how wrong a plan can go. Empty means the caller
+    # has only weekday buckets, and the simulation falls back to daily draws.
+    series: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         if len(self.by_weekday) != 7:
@@ -102,6 +107,9 @@ class DailySpendProfile:
             for amount in amounts:
                 if isinstance(amount, bool) or not isinstance(amount, int):
                     raise TypeError("observed amounts are integer sen")
+        for amount in self.series:
+            if isinstance(amount, bool) or not isinstance(amount, int):
+                raise TypeError("observed amounts are integer sen")
 
     @property
     def is_empty(self) -> bool:

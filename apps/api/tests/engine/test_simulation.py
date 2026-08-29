@@ -132,3 +132,47 @@ def test_a_full_run_is_fast_enough_to_serve_in_a_request():
     simulate(snapshot(), VARIED, 90, trials=2000, seed=1)
     elapsed = time.perf_counter() - started
     assert elapsed < 2.0, f"2000 x 90 took {elapsed:.2f}s — see spec §5.3 fallbacks"
+
+
+class TestBlockBootstrap:
+    """Spending is autocorrelated. Independent daily draws pretend it is not."""
+
+    SERIES = tuple(500 if (i // 7) % 2 == 0 else 9500 for i in range(84))
+
+    def profile(self, *, with_series: bool) -> DailySpendProfile:
+        buckets = [[] for _ in range(7)]
+        for index, amount in enumerate(self.SERIES):
+            buckets[index % 7].append(amount)
+        return DailySpendProfile(
+            by_weekday=tuple(tuple(b) for b in buckets),
+            lookback_days=84,
+            series=self.SERIES if with_series else (),
+        )
+
+    def test_whole_weeks_are_replayed_so_the_band_is_wider(self):
+        lean, blocked = (
+            simulate(snapshot(), self.profile(with_series=with_series), 84,
+                     trials=400, seed=21)
+            for with_series in (False, True)
+        )
+        lean_spread = lean.bands.p90[-1].sen - lean.bands.p10[-1].sen
+        blocked_spread = blocked.bands.p90[-1].sen - blocked.bands.p10[-1].sen
+        # Not a fixed multiple: the synthetic series is deliberately extreme, so
+        # even independent draws are wide. The point is that replaying whole
+        # weeks is wider still.
+        assert blocked_spread > lean_spread * 5 // 4
+
+    def test_a_profile_without_its_chronology_still_simulates(self):
+        result = simulate(snapshot(), self.profile(with_series=False), 30, trials=50, seed=2)
+        assert len(result.bands.p50) == 30
+
+    def test_a_series_shorter_than_a_week_falls_back_to_daily_draws(self):
+        short = DailySpendProfile(
+            by_weekday=tuple((1000,) for _ in range(7)), lookback_days=3, series=(1000, 2000)
+        )
+        result = simulate(snapshot(), short, 30, trials=50, seed=2)
+        assert result.bands.p10 == result.bands.p90
+
+    def test_the_block_draw_is_still_reproducible(self):
+        args = (snapshot(), self.profile(with_series=True), 84)
+        assert simulate(*args, trials=100, seed=4) == simulate(*args, trials=100, seed=4)
