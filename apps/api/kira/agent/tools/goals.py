@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from kira.agent.tools.spec import EvidenceRow, ToolContext, ToolResult, ToolSpec, money_str
 from kira.db.models import HORIZON_LONG, HORIZON_SHORT
@@ -35,12 +35,21 @@ class CreateGoalArgs(BaseModel):
 
 
 class UpdateGoalArgs(BaseModel):
-    goal_id: uuid.UUID
+    # A Plan card has the stable id, but a person says "Emergency top-up". Both
+    # routes end at the same owned-row lookup before anything can be approved.
+    goal_id: uuid.UUID | None = None
+    target_goal_name: str | None = Field(default=None, min_length=1, max_length=80)
     name: str | None = Field(default=None, max_length=80)
     target_sen: int | None = Field(default=None, gt=0)
     monthly_sen: int | None = Field(default=None, gt=0)
     saved_sen: int | None = Field(default=None, ge=0)
     note: str | None = Field(default=None, max_length=280)
+
+    @model_validator(mode="after")
+    def _one_goal_identifier(self) -> UpdateGoalArgs:
+        if (self.goal_id is None) == (self.target_goal_name is None):
+            raise ValueError("provide exactly one of goal_id or target_goal_name")
+        return self
 
 
 def _months(count: int) -> str:
@@ -119,10 +128,20 @@ async def _create(ctx: ToolContext, args: CreateGoalArgs) -> ToolResult:
 
 
 async def _update(ctx: ToolContext, args: UpdateGoalArgs) -> ToolResult:
+    goal_id = args.goal_id
+    if goal_id is None:
+        wanted = args.target_goal_name.casefold() if args.target_goal_name else ""
+        goal = next(
+            (goal for goal in await goal_service.list_goals(ctx.session, ctx.user) if goal.name.casefold() == wanted),
+            None,
+        )
+        if goal is None:
+            raise goal_service.GoalNotFound(args.target_goal_name or "")
+        goal_id = goal.id
     view = await goal_service.update_goal(
         ctx.session,
         ctx.user,
-        args.goal_id,
+        goal_id,
         name=args.name,
         target_sen=args.target_sen,
         monthly_sen=args.monthly_sen,
@@ -153,7 +172,8 @@ def _summarise_update(args: UpdateGoalArgs) -> str:
         changes.append(f"saved RM{Money(args.saved_sen).ringgit_str()}")
     if args.note is not None:
         changes.append("change the note")
-    return f"Update goal {args.goal_id}: {', '.join(changes) or 'no change'}."
+    target = args.target_goal_name or str(args.goal_id)
+    return f"Update goal {target}: {', '.join(changes) or 'no change'}."
 
 
 SPECS = (

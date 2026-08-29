@@ -416,6 +416,20 @@ def _compose_log_ask(messages: Sequence[BaseMessage], text: str) -> str:
     )
 
 
+_PLAN_GOAL = re.compile(r"monthly savings for\s+(.+?)\s+to\s+rm", re.I)
+
+
+def _plan_goal_args(text: str, attachment: dict[str, Any] | None, today: date) -> dict[str, Any]:
+    match = _PLAN_GOAL.search(text)
+    name = match.group(1).strip(" .,'\"") if match else ""
+    return {
+        "update_goal": {
+            "target_goal_name": name,
+            "monthly_sen": max(1, _amount_sen(text) or 0),
+        }
+    }
+
+
 ROUTES: tuple[Route, ...] = (
     Route(
         "attachment",
@@ -440,6 +454,12 @@ ROUTES: tuple[Route, ...] = (
             }
         },
         compose=_compose_remember,
+    ),
+    Route(
+        "plan_goal",
+        re.compile(r"propose setting my monthly savings for", re.I),
+        ("update_goal",),
+        arguments=_plan_goal_args,
     ),
     Route(
         "overspend",

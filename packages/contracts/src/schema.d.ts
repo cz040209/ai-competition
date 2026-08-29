@@ -398,6 +398,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/foresight": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Foresight */
+        get: operations["get_foresight_v1_foresight_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/foresight/scenarios": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Scenarios */
+        post: operations["post_scenarios_v1_foresight_scenarios_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -667,6 +701,50 @@ export interface components {
             /** Goals */
             goals: components["schemas"]["GoalSummaryResponse"][];
         };
+        /** DriverOut */
+        DriverOut: {
+            lever: components["schemas"]["LeverOut"];
+            /** Probability Bp Before */
+            probability_bp_before: number;
+            /** Probability Bp After */
+            probability_bp_after: number;
+            /** Bp Per Ringgit */
+            bp_per_ringgit: number;
+        };
+        /** ForesightResponse */
+        ForesightResponse: {
+            /** Horizon Days */
+            horizon_days: number;
+            /** Dates */
+            dates: string[];
+            /** P10 */
+            p10: components["schemas"]["MoneyOut"][];
+            /** P50 */
+            p50: components["schemas"]["MoneyOut"][];
+            /** P90 */
+            p90: components["schemas"]["MoneyOut"][];
+            /** Outlooks */
+            outlooks: components["schemas"]["GoalOutlookOut"][];
+            /** Drivers */
+            drivers: components["schemas"]["DriverOut"][];
+            /** Profile Days */
+            profile_days: number;
+            /** Assumption */
+            assumption: string;
+        };
+        /** GoalOutlookOut */
+        GoalOutlookOut: {
+            /** Goal Id */
+            goal_id: string;
+            /**
+             * Target Date
+             * Format: date
+             */
+            target_date: string;
+            /** Probability Bp */
+            probability_bp: number;
+            median_shortfall: components["schemas"]["MoneyOut"];
+        };
         /** GoalSummaryResponse */
         GoalSummaryResponse: {
             /**
@@ -693,6 +771,26 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /** LeverIn */
+        LeverIn: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "goal_monthly" | "commitment_amount" | "daily_spend";
+            /** Target Id */
+            target_id: string;
+            /** Delta Sen */
+            delta_sen: number;
+        };
+        /** LeverOut */
+        LeverOut: {
+            /** Kind */
+            kind: string;
+            /** Target Id */
+            target_id: string;
+            delta: components["schemas"]["MoneyOut"];
         };
         /** LoginRequest */
         LoginRequest: {
@@ -734,6 +832,13 @@ export interface components {
             /** Last Used At */
             last_used_at: string | null;
         };
+        /** MoneyOut */
+        MoneyOut: {
+            /** Sen */
+            sen: number;
+            /** Currency */
+            currency: string;
+        };
         /** NextCommitmentResponse */
         NextCommitmentResponse: {
             /**
@@ -766,6 +871,28 @@ export interface components {
             password: string;
             /** Display Name */
             display_name: string;
+        };
+        /** ScenarioComparisonResponse */
+        ScenarioComparisonResponse: {
+            /** Results */
+            results: components["schemas"]["ScenarioResultOut"][];
+        };
+        /** ScenarioRequest */
+        ScenarioRequest: {
+            /**
+             * Horizon Days
+             * @default 180
+             */
+            horizon_days: number;
+            /** Levers */
+            levers: components["schemas"]["LeverIn"][];
+        };
+        /** ScenarioResultOut */
+        ScenarioResultOut: {
+            lever: components["schemas"]["LeverOut"];
+            /** Outlooks */
+            outlooks: components["schemas"]["GoalOutlookOut"][];
+            safe_today_after: components["schemas"]["MoneyOut"];
         };
         /** TokenResponse */
         TokenResponse: {
@@ -1522,6 +1649,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CategoryResponse"][];
+                };
+            };
+        };
+    };
+    get_foresight_v1_foresight_get: {
+        parameters: {
+            query?: {
+                horizon?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForesightResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_scenarios_v1_foresight_scenarios_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScenarioRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScenarioComparisonResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
