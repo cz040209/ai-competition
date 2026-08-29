@@ -16,8 +16,9 @@ from kira.services import day_plan as day_plan_service
 
 MODULE = "day_plan"
 
-# Suria KLCC — the FakeMaps seed centre, and the prototype's own fallback for
-# a user who has not shared their location.
+# Suria KLCC — the prototype's own fallback for a user who has not shared their
+# location. The maps adapter covers the whole city, so this is a starting point
+# rather than the one spot its places cluster around.
 _KLCC_LAT = 3.1577
 _KLCC_LNG = 101.7120
 
@@ -46,7 +47,7 @@ class PlanArgs(BaseModel):
 async def _build(ctx: ToolContext, args: PlanArgs) -> ToolResult:
     room_sen = ctx.dashboard.safe_today_sen
     cap_sen = args.cap_sen if args.cap_sen is not None else room_sen
-    found = day_plan_service.find_places(
+    found = await day_plan_service.find_places(
         lat=args.lat,
         lng=args.lng,
         mode=args.mode,
@@ -76,7 +77,12 @@ async def _build(ctx: ToolContext, args: PlanArgs) -> ToolResult:
                 "id": place.id,
                 "name": place.name,
                 "kind": place.kind,
+                "address": place.address,
                 "km": place.km,
+                # The model is told which distance produced the fare so it
+                # cannot narrate a straight-line estimate as a quoted price.
+                "road_km": place.road_km,
+                "distance_basis": place.distance_basis,
                 "travel_sen": place.travel_sen,
                 "minutes": place.minutes,
                 "total_sen": place.total_sen,
@@ -99,6 +105,17 @@ async def _build(ctx: ToolContext, args: PlanArgs) -> ToolResult:
             room_row,
             EvidenceRow("Cheapest nearby", best.name),
             EvidenceRow("Total cost", money(best.total_sen)),
+            # Named beside the cost it produced. A fare measured in a straight
+            # line understates a real KL journey, and the row is what stops the
+            # figure above it reading as a quote.
+            EvidenceRow(
+                "Distance measured",
+                (
+                    f"{best.km:.1f} km by road"
+                    if best.distance_basis == "road"
+                    else f"{best.km:.1f} km in a straight line"
+                ),
+            ),
             EvidenceRow("Fits today's room", best.band),
         )
     elif found.nearby_count == 0:

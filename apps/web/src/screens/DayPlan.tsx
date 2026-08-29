@@ -70,6 +70,51 @@ function formatKm(km: number): string {
   return km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`;
 }
 
+/**
+ * The distance, and what it was measured on when that is in question.
+ *
+ * A straight line is measurably optimistic here: one KL journey is 3.7 km of
+ * great circle and 8.1 km of road, and the Grab fare doubles with it. So the
+ * two must never print identically where they sit side by side. Where a whole
+ * list shares one basis there is nothing on the row to tell apart, and the
+ * list says it once above instead of twenty-seven times down the page.
+ *
+ * ``road_km`` is not shown beside this: where the router answered it is the
+ * same number as ``km``, and where it did not it is null.
+ */
+function distanceText(place: Place, nameTheBasis: boolean): string {
+  const km = formatKm(place.km);
+  if (!nameTheBasis) return km;
+  return place.distance_basis === "road" ? `${km} by road` : `${km} straight line`;
+}
+
+/**
+ * A pin at the point, not a search for the name.
+ *
+ * Several names in this set belong to two branches, and a quarter of the
+ * addresses are a locality rather than a doorstep, so a name search is a coin
+ * flip between them. Google's search action takes either a name or a point and
+ * not both, so the point takes the query and the name goes where the user
+ * actually reads it — on the link.
+ */
+function mapsUrl(place: Place): string {
+  const point = encodeURIComponent(`${place.lat},${place.lng}`);
+  return `https://www.google.com/maps/search/?api=1&query=${point}`;
+}
+
+type CopyFailure = "unsupported" | "refused";
+
+// A copy that silently did nothing is worse than no copy button, so each way it
+// can fail says so and hands the text back to be taken by hand.
+const COPY_FAILURES: Record<CopyFailure, string> = {
+  // No clipboard object at all: an old browser, a webview, or a page served
+  // over plain http, where the API is not exposed.
+  unsupported: "This browser won't give me the clipboard.",
+  // There and refused: a denied permission, or a write from a tab that had lost
+  // focus by the time it ran.
+  refused: "The browser turned down the copy.",
+};
+
 function Toast({ message }: { message: string }) {
   return (
     <div className="toast" role="status">
@@ -87,19 +132,45 @@ type DetailSheetProps = {
   roomSen: number;
   onClose: () => void;
   onAdd: (place: Place) => void;
+  onCopied: (message: string) => void;
 };
 
-function DetailSheet({ place, modeLabel, roomSen, onClose, onAdd }: DetailSheetProps) {
+function DetailSheet({ place, modeLabel, roomSen, onClose, onAdd, onCopied }: DetailSheetProps) {
+  const [copyFailure, setCopyFailure] = useState<CopyFailure | null>(null);
   const mealSen = place.total_sen - place.travel_sen;
   const rows: [string, string][] = [
     ["Meal estimate", `RM${fmt(mealSen)}`],
     ["Travel", place.travel_sen > 0 ? `RM${fmt(place.travel_sen)} · ${modeLabel}` : "Free · on foot"],
     ["Total outing", `RM${fmt(place.total_sen)}`],
-    ["Distance", formatKm(place.km)],
+    // Always named here: this is one place read closely, with a fare hanging
+    // off the figure, so which distance produced it is part of the figure.
+    ["Distance", distanceText(place, true)],
     ["Confidence", `Estimate · ${place.confidence}`],
   ];
 
   const overSen = place.total_sen - roomSen;
+  // What a person would paste into a search box. Only about three quarters of
+  // these addresses are a street address; the rest are a locality, and that is
+  // what the field says, so that is what gets copied.
+  const details = place.address ? `${place.name}, ${place.address}` : place.name;
+
+  const copyDetails = async () => {
+    const clipboard = navigator.clipboard;
+    // Absent entirely on http and in some webviews, so this is a real branch
+    // and not defensive noise.
+    if (!clipboard?.writeText) {
+      setCopyFailure("unsupported");
+      return;
+    }
+    try {
+      await clipboard.writeText(details);
+      setCopyFailure(null);
+      onCopied(place.address ? `${place.name} and its address copied.` : `${place.name} copied.`);
+    } catch {
+      // Nothing reached the clipboard, so nothing here may suggest it did.
+      setCopyFailure("refused");
+    }
+  };
 
   return (
     <Sheet label={place.name} onClose={onClose}>
@@ -115,6 +186,15 @@ function DetailSheet({ place, modeLabel, roomSen, onClose, onAdd }: DetailSheetP
         </div>
         <div className="money" style={{ fontSize: 22 }}>RM{fmt(place.total_sen)}</div>
       </div>
+
+      {/* Rendered exactly as the field reads. About a quarter of these name a
+          locality rather than a doorstep, which is honest as it stands and is
+          not something to dress up into a street address it never had. */}
+      {place.address && (
+        <p style={{ margin: "-8px 0 14px", fontSize: 12.5, lineHeight: 1.45, color: "rgba(233,237,233,.6)" }}>
+          {place.address}
+        </p>
+      )}
 
       <p className="voice" style={{ margin: 0, fontSize: 16, lineHeight: 1.45, color: "#F1F4F0" }}>
         {place.band === "ok" &&
@@ -137,6 +217,18 @@ function DetailSheet({ place, modeLabel, roomSen, onClose, onAdd }: DetailSheetP
         ))}
       </div>
 
+      {/* The fare above was priced on this distance, so the caveat belongs
+          under it rather than only at the top of the list. */}
+      {place.distance_basis === "straight_line" && (
+        <p style={{ fontSize: 12, color: "rgba(233,237,233,.55)", lineHeight: 1.5, margin: "12px 0 0" }}>
+          I don&apos;t have a road distance for this one, so that is the straight line between here
+          and there. The road is longer than that
+          {place.travel_sen > 0
+            ? `, and the RM${fmt(place.travel_sen)} of travel is priced on the short figure.`
+            : "."}
+        </p>
+      )}
+
       {place.note && (
         <p style={{ fontSize: 12, color: "rgba(233,237,233,.55)", lineHeight: 1.5, margin: "14px 0 0" }}>
           {place.note}
@@ -144,6 +236,37 @@ function DetailSheet({ place, modeLabel, roomSen, onClose, onAdd }: DetailSheetP
       )}
 
       <div style={{ display: "flex", gap: 9, marginTop: 18 }}>
+        <a
+          className="btn btn-line btn-sm"
+          style={{ flex: 1, textDecoration: "none" }}
+          href={mapsUrl(place)}
+          target="_blank"
+          rel="noopener"
+          aria-label={`Open ${place.name} in Google Maps`}
+        >
+          Open in Maps
+        </a>
+        <button
+          type="button"
+          className="btn btn-line btn-sm"
+          style={{ flex: 1 }}
+          onClick={copyDetails}
+        >
+          Copy name and address
+        </button>
+      </div>
+
+      {copyFailure && (
+        <p
+          role="status"
+          style={{ fontSize: 12, color: "rgba(233,237,233,.62)", lineHeight: 1.5, margin: "10px 0 0" }}
+        >
+          {COPY_FAILURES[copyFailure]} Nothing was copied, so here it is to take by hand:{" "}
+          <span style={{ userSelect: "all", color: "#E7ECE7" }}>{details}</span>
+        </p>
+      )}
+
+      <div style={{ display: "flex", gap: 9, marginTop: 10 }}>
         <button className="btn btn-line btn-sm" style={{ flex: 1 }} onClick={onClose}>
           Close
         </button>
@@ -250,6 +373,16 @@ export function DayPlan() {
   const outOfRange = data.nearby_count === 0;
   const filteredOut = !outOfRange && data.matching_count === 0;
   const nearbyCount = data.nearby_count;
+  // The basis is per-place: one search routes some destinations and fails on
+  // others. Where the whole list fell back there is nothing to tell apart down
+  // the rows, and one line above says it better than twenty-seven repetitions;
+  // where only some did, every row has to be named or an unlabelled figure
+  // beside a labelled one is still a guess.
+  const straightLineCount = results.filter(
+    (place) => place.distance_basis === "straight_line",
+  ).length;
+  const everyPlaceFellBack = results.length > 0 && straightLineCount === results.length;
+  const someFellBack = straightLineCount > 0 && !everyPlaceFellBack;
   const modeLabel = MODES.find((candidate) => candidate.id === mode)?.label ?? mode;
   const selected = results.find((place) => place.id === selectedId) ?? null;
 
@@ -373,6 +506,19 @@ export function DayPlan() {
           )}
         </Reveal>
 
+        {everyPlaceFellBack && (
+          <Reveal delay={55} style={{ marginTop: 14 }}>
+            <p
+              role="status"
+              style={{ margin: 0, fontSize: 12, color: "var(--muted)", lineHeight: 1.5 }}
+            >
+              I don&apos;t have road distances for any of these, so every distance below is a
+              straight line. The road is longer than that, and the travel costs here are priced on
+              the short figure.
+            </p>
+          </Reveal>
+        )}
+
         <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 18 }}>
           {results.map((place, index) => (
             <Reveal key={place.id} delay={index * 70}>
@@ -389,7 +535,7 @@ export function DayPlan() {
                     {place.band === "over" && <span className="badge badge-over">Over</span>}
                   </span>
                   <span style={{ display: "block", fontSize: 12, color: "var(--muted)", marginTop: 3 }}>
-                    {place.kind} · {formatKm(place.km)} · {place.minutes} min
+                    {place.kind} · {distanceText(place, someFellBack)} · {place.minutes} min
                   </span>
                   <span
                     style={{
@@ -502,6 +648,7 @@ export function DayPlan() {
           roomSen={roomSen}
           onClose={() => setSelectedId(null)}
           onAdd={addToToday}
+          onCopied={setToast}
         />
       )}
 

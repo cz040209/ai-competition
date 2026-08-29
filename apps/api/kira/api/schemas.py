@@ -61,10 +61,29 @@ class GoalSummaryResponse(ResponseModel):
 
 
 class PlaceResponse(ResponseModel):
+    """One outing, priced on the distance named by ``distance_basis``.
+
+    A fare is charged on the road, so ``km`` is the road distance whenever the
+    router answered for this place. Where it did not, ``km`` falls back to the
+    great circle, ``road_km`` is null, and ``distance_basis`` says
+    ``straight_line`` -- which the screen has to show, because a straight-line
+    ride fare in Kuala Lumpur can be half of the real one. The basis is
+    per-place: one search routes some destinations and fails on others.
+    """
+
     id: str
     name: str
     kind: str
+    address: str
+    # The point itself, because the address alone does not always find it: a
+    # quarter of them name a locality rather than a doorstep, and several names
+    # in the set belong to two branches. A client sending the user to a map has
+    # to be able to send them to this one.
+    lat: float
+    lng: float
     km: float
+    road_km: float | None
+    distance_basis: Literal["road", "straight_line"]
     travel_sen: int
     minutes: int
     total_sen: int

@@ -346,9 +346,12 @@
 .ringwrap figcaption{position:absolute;inset:0;display:grid;place-items:center;text-align:center;}
 
 /* ---------- toast ---------- */
+/* Above the scrim (50) and the sheet (51): a sheet that stays open while it
+   confirms something -- copying a place's address, say -- would otherwise
+   cover its own confirmation, which is the same as not confirming at all. */
 .toast{position:absolute;left:20px;right:20px;bottom:112px;background:var(--ink);color:#EDF1ED;border-radius:16px;
   padding:13px 16px;font-size:13px;font-weight:600;display:flex;gap:10px;align-items:center;box-shadow:var(--shadow-md);
-  z-index:40;overflow:hidden;animation:toastIn .55s var(--spring-2);}
+  z-index:60;overflow:hidden;animation:toastIn .55s var(--spring-2);}
 @keyframes toastIn{from{opacity:0;transform:translateY(22px) scale(.93);}to{opacity:1;transform:none;}}
 .toast::after{content:'';position:absolute;left:0;bottom:0;height:2px;background:var(--brass);width:100%;
   transform-origin:left;animation:toastBar 3.4s linear forwards;}

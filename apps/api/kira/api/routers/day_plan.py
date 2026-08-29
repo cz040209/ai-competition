@@ -30,7 +30,7 @@ async def get_places(
     dashboard = await today_dashboard(session, user, today_for())
     room_sen = dashboard.safe_today_sen
     cap = cap_sen if cap_sen is not None else room_sen
-    found = find_places(
+    found = await find_places(
         lat=lat,
         lng=lng,
         mode=mode,

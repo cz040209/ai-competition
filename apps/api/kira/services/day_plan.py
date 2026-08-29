@@ -16,6 +16,11 @@ from kira.money import round_half_up
 
 Mode = Literal["walk", "transit", "ride"]
 Band = Literal["ok", "tight", "over"]
+# Which distance the fare and the clock below were actually built from. It
+# travels with every place because it is per-place: one search can route some
+# destinations and fail on others, and a single flag for the list would have to
+# lie about half of it.
+DistanceBasis = Literal["road", "straight_line"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,7 +43,20 @@ class EvaluatedPlace:
     id: str
     name: str
     kind: str
+    address: str
+    # Where it stands, so a client can point a map at this shop rather than at
+    # its name. A quarter of the addresses above are a locality rather than a
+    # doorstep, and eight of the names in the demo set belong to two branches
+    # each -- a name search reaches the wrong one of those with no warning.
+    lat: float
+    lng: float
+    # The distance every figure below was computed from, whichever kind it is.
     km: float
+    # The road figure on its own, or None where the router did not answer for
+    # this place. Stated separately from ``km`` so a client can show the real
+    # driving distance without having to know which basis produced ``km``.
+    road_km: float | None
+    distance_basis: DistanceBasis
     travel_sen: int
     minutes: int
     total_sen: int
@@ -52,11 +70,28 @@ class EvaluatedPlace:
 
 
 def evaluate_place(
-    place: Place, origin_lat: float, origin_lng: float, mode: Mode, room_sen: int
+    place: Place,
+    origin_lat: float,
+    origin_lng: float,
+    mode: Mode,
+    room_sen: int,
+    road_metres: float | None = None,
 ) -> EvaluatedPlace:
     """room_sen is always today's real safe-to-spend -- it is NOT the same as
-    the caller's display cap_sen, which only filters what is shown."""
-    km = haversine_km(origin_lat, origin_lng, place.lat, place.lng)
+    the caller's display cap_sen, which only filters what is shown.
+
+    ``road_metres`` is what the routing adapter said about this place, or None
+    if it said nothing. A car is charged for the road it drives, so where there
+    is a road figure it is the one the fare and the travel time are built on;
+    the great circle only stands in when there is not, and the basis returned
+    with the place says which of the two happened.
+    """
+    # Kept regardless: it is the fallback, and computing it is free next to the
+    # call that may or may not have replaced it.
+    straight_line_km = haversine_km(origin_lat, origin_lng, place.lat, place.lng)
+    road_km = None if road_metres is None else road_metres / 1000
+    basis: DistanceBasis = "straight_line" if road_km is None else "road"
+    km = straight_line_km if road_km is None else road_km
     cost = MODES[mode]
     # Distance is a measurement, so a float is right for it. The fare it implies
     # is money, so it is not: the per-km charge is accumulated in whole sen and
@@ -78,7 +113,12 @@ def evaluate_place(
         id=place.id,
         name=place.name,
         kind=place.kind,
+        address=place.address,
+        lat=place.lat,
+        lng=place.lng,
         km=km,
+        road_km=road_km,
+        distance_basis=basis,
         travel_sen=travel_sen,
         minutes=minutes,
         total_sen=total_sen,
@@ -115,7 +155,7 @@ class PlacesFound:
     matching_count: int
 
 
-def find_places(
+async def find_places(
     *,
     lat: float,
     lng: float,
@@ -126,10 +166,46 @@ def find_places(
     radius_km: float = 5.0,
 ) -> PlacesFound:
     """cap_sen filters what is shown; room_sen (today's safe-to-spend) drives
-    share/band and must never be swapped with cap_sen."""
-    nearby = get_adapters().maps.places_near(lat, lng, radius_km)
+    share/band and must never be swapped with cap_sen.
+
+    The order below is load-bearing. Routing happens after the radius and the
+    halal filter and before the ceiling, because it is the only step that costs
+    a network call and the only step whose answer changes what the ceiling is
+    judging.
+    """
+    adapters = get_adapters()
+    # The radius is measured in a straight line, and that is correct as a
+    # pre-filter: the great circle between two points is never longer than a
+    # road between them, so a straight-line radius can only ever be too
+    # generous. Nothing the road would have put inside it is dropped here --
+    # only extra candidates come through, and the ceiling below removes them.
+    # Routing first, to filter on road distance, would mean asking a public
+    # service about the whole city to throw most of it away.
+    nearby = adapters.maps.places_near(lat, lng, radius_km)
     matching = [place for place in nearby if not halal_only or place.halal]
-    evaluated = (evaluate_place(place, lat, lng, mode, room_sen) for place in matching)
+
+    # One call for everything still standing. A 5 km radius holds a few dozen
+    # places, well inside what OSRM's table service answers in one request, so
+    # the whole search costs one round trip however many places it found.
+    routed = await adapters.routing.road_metres(
+        (lat, lng), [(place.lat, place.lng) for place in matching]
+    )
+    if len(routed) != len(matching):
+        # An adapter that answered a different number of destinations than it
+        # was asked about cannot be lined up with them, and pairing them off
+        # anyway would put one place's distance on another place's fare. The
+        # straight line is wrong by a known amount; that would be wrong by an
+        # unknown one.
+        routed = [None] * len(matching)
+
+    evaluated = [
+        evaluate_place(place, lat, lng, mode, room_sen, road_metres=metres)
+        for place, metres in zip(matching, routed, strict=True)
+    ]
+    # The ceiling runs last, on the total the road produced. Applying it to a
+    # straight-line total would admit places the user cannot actually afford --
+    # the 3.7 km that is really 8.1 km of driving is RM12.05 of fare under a
+    # ceiling it clears and RM20.39 in the car it does not.
     under_cap = (p for p in evaluated if p.total_sen <= cap_sen)
     return PlacesFound(
         places=tuple(sorted(under_cap, key=lambda p: p.total_sen)),

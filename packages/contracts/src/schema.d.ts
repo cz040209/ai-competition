@@ -779,7 +779,17 @@ export interface components {
             /** Protected */
             protected: boolean;
         };
-        /** PlaceResponse */
+        /**
+         * PlaceResponse
+         * @description One outing, priced on the distance named by ``distance_basis``.
+         *
+         *     A fare is charged on the road, so ``km`` is the road distance whenever the
+         *     router answered for this place. Where it did not, ``km`` falls back to the
+         *     great circle, ``road_km`` is null, and ``distance_basis`` says
+         *     ``straight_line`` -- which the screen has to show, because a straight-line
+         *     ride fare in Kuala Lumpur can be half of the real one. The basis is
+         *     per-place: one search routes some destinations and fails on others.
+         */
         PlaceResponse: {
             /** Id */
             id: string;
@@ -787,8 +797,21 @@ export interface components {
             name: string;
             /** Kind */
             kind: string;
+            /** Address */
+            address: string;
+            /** Lat */
+            lat: number;
+            /** Lng */
+            lng: number;
             /** Km */
             km: number;
+            /** Road Km */
+            road_km: number | null;
+            /**
+             * Distance Basis
+             * @enum {string}
+             */
+            distance_basis: "road" | "straight_line";
             /** Travel Sen */
             travel_sen: number;
             /** Minutes */

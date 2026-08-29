@@ -3,6 +3,8 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { DayPlan } from "@kira/contracts";
+
 import { App } from "./App";
 
 const DASHBOARD = {
@@ -63,6 +65,38 @@ const ACTIVITY = {
   ],
   spent_this_cycle_sen: 1620,
   categories: [{ slug: "transport", label: "Transport", spent_this_cycle_sen: 1620, count: 1 }],
+};
+
+/** Typed against the contract on purpose: an untyped literal here would go on
+ *  compiling after the API grew a field, and the shell would be exercised
+ *  against a response the API cannot send. The counts are what tell the three
+ *  empty lists apart, so they are stated too. */
+const DAY_PLAN: DayPlan = {
+  room_sen: 5297,
+  cap_sen: 5297,
+  nearby_count: 1,
+  matching_count: 1,
+  places: [
+    {
+      id: "p1",
+      name: "Nasi Kandar Pelita",
+      kind: "Mamak",
+      address: "166 Jalan Ampang, 50450 Kuala Lumpur",
+      lat: 3.1591,
+      lng: 101.7132,
+      km: 0.65,
+      road_km: 0.65,
+      distance_basis: "road",
+      travel_sen: 0,
+      minutes: 14,
+      total_sen: 1250,
+      share: 0.24,
+      band: "ok",
+      confidence: "high",
+      note: "Fast counter service, open late.",
+      halal: true,
+    },
+  ],
 };
 
 /** Mutable so a test can prove the screens re-read after a confirm. */
@@ -130,18 +164,10 @@ beforeEach(() => {
         });
       }
       if (url.includes("/v1/day-plan/places")) {
-        return new Response(
-          // The counts are what tell the three empty lists apart, so a stub
-          // that leaves them out is a response the API never sends.
-          JSON.stringify({
-            room_sen: 5297,
-            cap_sen: 5297,
-            nearby_count: 0,
-            matching_count: 0,
-            places: [],
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+        return new Response(JSON.stringify(DAY_PLAN), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
       }
       return new Response("", { status: 404 });
     }),

@@ -14,50 +14,80 @@ vi.mock("../api/client", () => ({
 
 const ROOM_SEN = 5297;
 
-const PLACES: Place[] = [
-  {
-    id: "p1",
-    name: "Nasi Kandar Pelita",
-    kind: "Mamak",
-    km: 0.65,
-    travel_sen: 0,
-    minutes: 14,
-    total_sen: 1250,
-    share: 0.24,
-    band: "ok",
-    confidence: "high",
-    halal: true,
-    note: "Fast counter service, open late.",
-  },
-  {
-    id: "p2",
-    name: "Chee Meng Chicken Rice",
-    kind: "Chinese",
-    km: 1.8,
-    travel_sen: 500,
-    minutes: 22,
-    total_sen: 4800,
-    share: 0.92,
-    band: "tight",
-    confidence: "medium",
-    halal: false,
-    note: "Small shop, queue moves quickly.",
-  },
-  {
-    id: "p3",
-    name: "Sky Bar Steakhouse",
-    kind: "Fine dining",
-    km: 3.2,
-    travel_sen: 900,
-    minutes: 35,
-    total_sen: 9800,
-    share: 1.9,
-    band: "over",
-    confidence: "low",
-    halal: true,
-    note: "Way past today's room.",
-  },
-];
+/** Routed places, stated the way the API states them: ``km`` is the road
+ *  figure, ``road_km`` repeats it, and the basis says so. A fixture missing any
+ *  of the three is a response the API cannot send, and the branches that read
+ *  them would go untested behind it. */
+const PELITA: Place = {
+  id: "p1",
+  name: "Nasi Kandar Pelita",
+  kind: "Mamak",
+  address: "166 Jalan Ampang, 50450 Kuala Lumpur",
+  lat: 3.1591,
+  lng: 101.7132,
+  km: 0.65,
+  road_km: 0.65,
+  distance_basis: "road",
+  travel_sen: 0,
+  minutes: 14,
+  total_sen: 1250,
+  share: 0.24,
+  band: "ok",
+  confidence: "high",
+  halal: true,
+  note: "Fast counter service, open late.",
+};
+
+const CHEE_MENG: Place = {
+  id: "p2",
+  name: "Chee Meng Chicken Rice",
+  kind: "Chinese",
+  // A locality rather than a doorstep, which is what a quarter of the shipped
+  // set actually reads like. Rendered as it stands, not dressed up.
+  address: "Ampang, Kuala Lumpur",
+  lat: 3.1503,
+  lng: 101.7261,
+  km: 1.8,
+  road_km: 1.8,
+  distance_basis: "road",
+  travel_sen: 500,
+  minutes: 22,
+  total_sen: 4800,
+  share: 0.92,
+  band: "tight",
+  confidence: "medium",
+  halal: false,
+  note: "Small shop, queue moves quickly.",
+};
+
+const SKY_BAR: Place = {
+  id: "p3",
+  name: "Sky Bar Steakhouse",
+  kind: "Fine dining",
+  address: "Level 33, Jalan Pinang, 50450 Kuala Lumpur",
+  lat: 3.1552,
+  lng: 101.7118,
+  km: 3.2,
+  road_km: 3.2,
+  distance_basis: "road",
+  travel_sen: 900,
+  minutes: 35,
+  total_sen: 9800,
+  share: 1.9,
+  band: "over",
+  confidence: "low",
+  halal: true,
+  note: "Way past today's room.",
+};
+
+const PLACES: Place[] = [PELITA, CHEE_MENG, SKY_BAR];
+
+/** The same place with the router silent: ``km`` is the great circle, there is
+ *  no road figure to show beside it, and the fare below is priced on the short
+ *  one. The real journey behind these numbers is 8.1 km of road. */
+function fellBack(place: Place, straightLineKm: number): Place {
+  return { ...place, km: straightLineKm, road_km: null, distance_basis: "straight_line" };
+}
 
 const RESPONSE: DayPlanData = {
   room_sen: ROOM_SEN,
@@ -116,10 +146,30 @@ function geolocationAt(lat: number, lng: number) {
   );
 }
 
+/** jsdom ships no clipboard, and userEvent.setup() installs a working stub of
+ *  its own — so both of these have to run *after* the setup inside openSheet,
+ *  or that stub silently puts a functioning clipboard back under the test. */
+function stubClipboard(writeText: (text: string) => Promise<void>) {
+  const spy = vi.fn(writeText);
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: spy } });
+  return spy;
+}
+
+function removeClipboard() {
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined });
+}
+
+async function openSheet(name: string) {
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: new RegExp(name) }));
+  return { user, sheet: screen.getByRole("dialog", { name }) };
+}
+
 beforeEach(() => {
   vi.mocked(api.get).mockReset();
   vi.mocked(api.get).mockResolvedValue(RESPONSE);
   Reflect.deleteProperty(navigator, "geolocation");
+  Reflect.deleteProperty(navigator, "clipboard");
 });
 
 describe("DayPlan", () => {
@@ -256,7 +306,7 @@ describe("DayPlan", () => {
     vi.mocked(api.get).mockResolvedValue({
       ...NOTHING_LEFT,
       cap_sen: 5000,
-      places: [{ ...PLACES[0], share: null, band: "over" }],
+      places: [{ ...PELITA, share: null, band: "over" }],
     });
     renderDayPlan();
 
@@ -480,17 +530,198 @@ describe("DayPlan", () => {
   it("opens a detail sheet with the cost breakdown and adds it to today", async () => {
     renderDayPlan();
     await screen.findByText("Nasi Kandar Pelita");
-    const user = userEvent.setup();
 
-    await user.click(screen.getByRole("button", { name: /Nasi Kandar Pelita/ }));
-    const sheet = screen.getByRole("dialog", { name: "Nasi Kandar Pelita" });
+    const { user, sheet } = await openSheet("Nasi Kandar Pelita");
     expect(within(sheet).getAllByText("RM12.50").length).toBeGreaterThan(0);
     expect(within(sheet).getByText("Meal estimate")).toBeInTheDocument();
-    expect(within(sheet).getByText("650 m")).toBeInTheDocument();
+    expect(within(sheet).getByText("650 m by road")).toBeInTheDocument();
 
     await user.click(within(sheet).getByRole("button", { name: "Add to today" }));
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(await screen.findByText(/added to today/i)).toBeInTheDocument();
+  });
+});
+
+describe("DayPlan · which distance the numbers are on", () => {
+  it("does not print a straight-line figure the way it prints a road one", async () => {
+    // The same place, the same fare, on two different measurements: 3.7 km of
+    // great circle where the road is 8.1 km. If these two render identically
+    // the screen is quoting the optimistic one as though it were the journey.
+    vi.mocked(api.get).mockResolvedValue({
+      ...RESPONSE,
+      places: [PELITA, fellBack(CHEE_MENG, 3.7)],
+    });
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+
+    expect(screen.getByText(/Mamak · 650 m by road · 14 min/)).toBeInTheDocument();
+    expect(screen.getByText(/Chinese · 3.7 km straight line · 22 min/)).toBeInTheDocument();
+  });
+
+  it("leaves the rows unqualified when every distance on them is a road one", async () => {
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+
+    // Nothing to tell apart, so nothing is hedged: the rows read as the plain
+    // figures they are, and no fallback notice is raised over a routed list.
+    expect(screen.getByText(/Mamak · 650 m · 14 min/)).toBeInTheDocument();
+    expect(screen.queryByText(/straight line/i)).not.toBeInTheDocument();
+  });
+
+  it("says once, above the list, that a wholly unrouted list is straight lines", async () => {
+    const places = [
+      fellBack(PELITA, 0.61),
+      fellBack(CHEE_MENG, 3.7),
+      fellBack(SKY_BAR, 2.9),
+    ];
+    vi.mocked(api.get).mockResolvedValue({ ...RESPONSE, places });
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+
+    expect(
+      screen.getAllByText(/every distance below is a straight line/i),
+    ).toHaveLength(1);
+    // Said once at the top rather than repeated down every row.
+    expect(screen.queryByText(/km straight line ·/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Chinese · 3.7 km · 22 min/)).toBeInTheDocument();
+  });
+
+  it("keeps the fallback notice off a list that has any road distance in it", async () => {
+    vi.mocked(api.get).mockResolvedValue({
+      ...RESPONSE,
+      places: [PELITA, fellBack(CHEE_MENG, 3.7)],
+    });
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+
+    // One line claiming the whole list is straight lines would be false here,
+    // and the rows already name each place's own basis.
+    expect(screen.queryByText(/every distance below is a straight line/i)).not.toBeInTheDocument();
+  });
+
+  it("names the basis in the sheet, and what the fare was priced on", async () => {
+    vi.mocked(api.get).mockResolvedValue({
+      ...RESPONSE,
+      places: [PELITA, fellBack(CHEE_MENG, 3.7)],
+    });
+    renderDayPlan();
+    await screen.findByText("Chee Meng Chicken Rice");
+
+    const { sheet } = await openSheet("Chee Meng Chicken Rice");
+    expect(within(sheet).getByText("3.7 km straight line")).toBeInTheDocument();
+    expect(within(sheet).getByText(/RM5.00 of travel is priced on the short figure/)).toBeInTheDocument();
+  });
+
+  it("carries no straight-line caveat into the sheet of a routed place", async () => {
+    renderDayPlan();
+    await screen.findByText("Chee Meng Chicken Rice");
+
+    const { sheet } = await openSheet("Chee Meng Chicken Rice");
+    expect(within(sheet).getByText("1.8 km by road")).toBeInTheDocument();
+    expect(within(sheet).queryByText(/straight line/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("DayPlan · finding the shop again", () => {
+  it("shows the address the API gave, locality and all", async () => {
+    renderDayPlan();
+    await screen.findByText("Chee Meng Chicken Rice");
+
+    // "Ampang, Kuala Lumpur" is a locality, not a doorstep. That is what the
+    // field says, so that is what the sheet shows — no invented precision.
+    const { sheet } = await openSheet("Chee Meng Chicken Rice");
+    expect(within(sheet).getByText("Ampang, Kuala Lumpur")).toBeInTheDocument();
+  });
+
+  it("points Maps at the coordinates rather than searching for the name", async () => {
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+
+    const { sheet } = await openSheet("Nasi Kandar Pelita");
+    const link = within(sheet).getByRole("link", { name: /Open Nasi Kandar Pelita in Google Maps/ });
+    expect(link).toHaveAttribute(
+      "href",
+      "https://www.google.com/maps/search/?api=1&query=3.1591%2C101.7132",
+    );
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noopener");
+  });
+
+  it("sends two branches of one name to two different pins", async () => {
+    // The reason the query is a point and not a name: this set really does
+    // hold shops whose name alone cannot say which one is meant.
+    const other: Place = { ...PELITA, id: "p1b", lat: 3.1102, lng: 101.6784 };
+    vi.mocked(api.get).mockResolvedValue({ ...RESPONSE, places: [PELITA, other] });
+    renderDayPlan();
+    await screen.findAllByText("Nasi Kandar Pelita");
+    const user = userEvent.setup();
+
+    const rows = screen.getAllByRole("button", { name: /Nasi Kandar Pelita/ });
+    expect(rows).toHaveLength(2);
+
+    const hrefs: (string | null)[] = [];
+    for (const row of rows) {
+      await user.click(row);
+      const dialog = screen.getByRole("dialog");
+      hrefs.push(within(dialog).getByRole("link", { name: /in Google Maps/ }).getAttribute("href"));
+      await user.click(within(dialog).getByRole("button", { name: "Close" }));
+    }
+
+    expect(hrefs).toEqual([
+      "https://www.google.com/maps/search/?api=1&query=3.1591%2C101.7132",
+      "https://www.google.com/maps/search/?api=1&query=3.1102%2C101.6784",
+    ]);
+  });
+
+  it("copies the name and address, and says it did", async () => {
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+
+    const { user, sheet } = await openSheet("Nasi Kandar Pelita");
+    const writeText = stubClipboard(async () => {});
+    await user.click(within(sheet).getByRole("button", { name: "Copy name and address" }));
+
+    expect(writeText).toHaveBeenCalledWith(
+      "Nasi Kandar Pelita, 166 Jalan Ampang, 50450 Kuala Lumpur",
+    );
+    // The sheet stays open, so the confirmation has to clear it on screen —
+    // hence the toast sitting above the sheet rather than behind its scrim.
+    expect(
+      await screen.findByText("Nasi Kandar Pelita and its address copied."),
+    ).toBeInTheDocument();
+  });
+
+  it("admits it when there is no clipboard to write to", async () => {
+    // http, an old browser, a webview: navigator.clipboard is simply absent,
+    // and the button must not sit there looking as though it worked.
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+
+    const { user, sheet } = await openSheet("Nasi Kandar Pelita");
+    removeClipboard();
+    await user.click(within(sheet).getByRole("button", { name: "Copy name and address" }));
+
+    expect(await within(sheet).findByText(/won't give me the clipboard/i)).toBeInTheDocument();
+    expect(within(sheet).getByText(/Nothing was copied/i)).toBeInTheDocument();
+    // The text is handed back rather than lost with the failure.
+    expect(
+      within(sheet).getByText("Nasi Kandar Pelita, 166 Jalan Ampang, 50450 Kuala Lumpur"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/and its address copied/i)).not.toBeInTheDocument();
+  });
+
+  it("admits it when the clipboard refuses the write", async () => {
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+
+    const { user, sheet } = await openSheet("Nasi Kandar Pelita");
+    const writeText = stubClipboard(() => Promise.reject(new Error("denied")));
+    await user.click(within(sheet).getByRole("button", { name: "Copy name and address" }));
+
+    expect(writeText).toHaveBeenCalled();
+    expect(await within(sheet).findByText(/turned down the copy/i)).toBeInTheDocument();
+    expect(within(sheet).getByText(/Nothing was copied/i)).toBeInTheDocument();
+    expect(screen.queryByText(/and its address copied/i)).not.toBeInTheDocument();
   });
 });

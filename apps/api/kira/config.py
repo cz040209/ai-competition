@@ -38,6 +38,18 @@ class Settings(BaseSettings):
     capture_voice_enabled: bool = True
     capture_max_bytes: int = 8 * 1024 * 1024
 
+    # ── Routing ───────────────────────────────────────────────────────────────
+    # A Grab fare is charged on the road, not on the great circle: Bangsar to a
+    # shop 3.7 km away in a straight line is 8.1 km of driving, and quoting the
+    # straight line understates that trip by about half. OSRM is asked for the
+    # road figure; off, or unconfigured, or unreachable, the planner falls back
+    # to the straight line and every place it returns is labelled as such.
+    routing_enabled: bool = True
+    osrm_base_url: str = "https://router.project-osrm.org"
+    # Short on purpose. The public router is volunteer-run and owes us nothing,
+    # and a page that states today's money must not hang waiting on it.
+    routing_timeout_seconds: float = 2.5
+
     @property
     def checkpointer_dsn(self) -> str:
         """LangGraph's Postgres checkpointer runs on psycopg3, not asyncpg.

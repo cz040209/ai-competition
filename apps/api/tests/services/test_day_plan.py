@@ -1,117 +1,121 @@
-"""find_places() ports kira-prototype.jsx's evaluate() (line 661)."""
+"""find_places() ports kira-prototype.jsx's evaluate() (line 661).
+
+Every scenario runs against the ``place_world`` fixture, not the shipped KL set:
+that file is generated from OpenStreetMap and refreshed, so a test naming a real
+place would be pinning data rather than behaviour.
+
+The fixture serves ``NoRouting``, so unless a test says otherwise every distance
+here is the straight line and every place says so. The road-distance scenarios
+below opt in with ``serving(StubRouting(...))``.
+"""
 
 from __future__ import annotations
 
 from kira.adapters.protocols import Place
 from kira.money import Money
 from kira.services.day_plan import evaluate_place, find_places
-
-KLCC_LAT = 3.1577
-KLCC_LNG = 101.7120
-
-# George Town, Penang: ~300 km from every seeded place.
-PENANG_LAT = 5.4141
-PENANG_LNG = 100.3288
-
-# 4.9 km due south of Lot 10 Hutong: the only seeded place within 5 km of here
-# is Lot 10 itself, which is not halal.
-ONLY_NON_HALAL_LAT = 3.10248
-ONLY_NON_HALAL_LNG = 101.7106
+from tests.conftest import StubRouting, serving
 
 
 class TestBandThresholds:
     """Walk mode has base=0 and per_km=0, so total_sen == the place's estimate,
     which makes the ok/tight/over boundaries easy to reason about directly."""
 
-    def test_ok_tight_and_over_all_appear(self):
-        places = find_places(
-            lat=KLCC_LAT,
-            lng=KLCC_LNG,
-            mode="walk",
-            halal_only=False,
-            cap_sen=100_000,
-            room_sen=2000,
+    async def test_ok_tight_and_over_all_appear(self, place_world):
+        places = (
+            await find_places(
+                **place_world.origin,
+                mode="walk",
+                halal_only=False,
+                cap_sen=100_000,
+                room_sen=2000,
+            )
         ).places
         by_name = {p.name: p for p in places}
 
         # 900 / 2000 = 0.45 <= 0.6
-        assert by_name["Zus Coffee, Jln Ampang"].share == 0.45
-        assert by_name["Zus Coffee, Jln Ampang"].band == "ok"
+        assert by_name[place_world.cheap.name].share == 0.45
+        assert by_name[place_world.cheap.name].band == "ok"
 
         # 1250 / 2000 = 0.625, in (0.6, 1.0]
-        assert by_name["Nasi Kandar Pelita"].band == "tight"
+        assert by_name[place_world.mid.name].band == "tight"
 
-        # 4600 / 2000 = 2.3 > 1.0
-        assert by_name["Sushi Zanmai KLCC"].band == "over"
+        # 5000 / 2000 = 2.5 > 1.0
+        assert by_name[place_world.pricey.name].band == "over"
 
-    def test_band_boundaries_are_inclusive_of_their_upper_edge(self):
+    async def test_band_boundaries_are_inclusive_of_their_upper_edge(self, place_world):
         # A place whose total is exactly 60% of room lands in "ok", not "tight".
-        places = find_places(
-            lat=KLCC_LAT,
-            lng=KLCC_LNG,
-            mode="walk",
-            halal_only=False,
-            cap_sen=100_000,
-            room_sen=1500,  # 900 / 1500 = 0.6 exactly
+        places = (
+            await find_places(
+                **place_world.origin,
+                mode="walk",
+                halal_only=False,
+                cap_sen=100_000,
+                room_sen=1500,  # 900 / 1500 = 0.6 exactly
+            )
         ).places
-        zus = next(p for p in places if p.name == "Zus Coffee, Jln Ampang")
-        assert zus.share == 0.6
-        assert zus.band == "ok"
+        cheap = next(p for p in places if p.name == place_world.cheap.name)
+        assert cheap.share == 0.6
+        assert cheap.band == "ok"
 
 
 class TestHalalFilter:
-    def test_excludes_non_halal_places_when_requested(self):
-        places = find_places(
-            lat=KLCC_LAT,
-            lng=KLCC_LNG,
-            mode="walk",
-            halal_only=True,
-            cap_sen=100_000,
-            room_sen=100_000,
+    async def test_excludes_non_halal_places_when_requested(self, place_world):
+        places = (
+            await find_places(
+                **place_world.origin,
+                mode="walk",
+                halal_only=True,
+                cap_sen=100_000,
+                room_sen=100_000,
+            )
         ).places
         assert places  # sanity: the filter did not empty the whole set
         assert all(p.halal for p in places)
         names = {p.name for p in places}
-        assert "Chee Meng Chicken Rice" not in names
-        assert "Lot 10 Hutong" not in names
+        assert place_world.near_non_halal.name not in names
+        assert place_world.far_non_halal.name not in names
 
-    def test_includes_non_halal_places_by_default(self):
-        places = find_places(
-            lat=KLCC_LAT,
-            lng=KLCC_LNG,
-            mode="walk",
-            halal_only=False,
-            cap_sen=100_000,
-            room_sen=100_000,
+    async def test_includes_non_halal_places_by_default(self, place_world):
+        places = (
+            await find_places(
+                **place_world.origin,
+                mode="walk",
+                halal_only=False,
+                cap_sen=100_000,
+                room_sen=100_000,
+            )
         ).places
         names = {p.name for p in places}
-        assert "Chee Meng Chicken Rice" in names
+        assert place_world.near_non_halal.name in names
 
 
 class TestCapFilter:
-    def test_a_place_above_the_cap_is_excluded(self):
-        places = find_places(
-            lat=KLCC_LAT,
-            lng=KLCC_LNG,
-            mode="walk",
-            halal_only=False,
-            cap_sen=1500,  # below Sushi Zanmai's 4600
-            room_sen=100_000,
+    async def test_a_place_above_the_cap_is_excluded(self, place_world):
+        places = (
+            await find_places(
+                **place_world.origin,
+                mode="walk",
+                halal_only=False,
+                cap_sen=1500,  # below Omakase Empat's 5000
+                room_sen=100_000,
+            )
         ).places
         names = {p.name for p in places}
-        assert "Sushi Zanmai KLCC" not in names
+        assert place_world.pricey.name not in names
         assert all(p.total_sen <= 1500 for p in places)
 
 
 class TestSortOrder:
-    def test_results_are_sorted_ascending_by_total_sen(self):
-        places = find_places(
-            lat=KLCC_LAT,
-            lng=KLCC_LNG,
-            mode="walk",
-            halal_only=False,
-            cap_sen=100_000,
-            room_sen=100_000,
+    async def test_results_are_sorted_ascending_by_total_sen(self, place_world):
+        places = (
+            await find_places(
+                **place_world.origin,
+                mode="walk",
+                halal_only=False,
+                cap_sen=100_000,
+                room_sen=100_000,
+            )
         ).places
         totals = [p.total_sen for p in places]
         assert totals == sorted(totals)
@@ -121,34 +125,36 @@ class TestRoomIsNotCap:
     """room_sen (today's real safe-to-spend) drives share/band. cap_sen only
     filters what is shown. Swapping the two is the bug this guards against."""
 
-    def test_a_place_can_be_shown_by_cap_but_still_be_over_room(self):
-        # Nasi Kandar Pelita costs 1250 sen (walk mode adds no travel cost).
-        # cap_sen=2100 admits it into the results; room_sen=1000 means it
-        # actually costs more than the user's whole safe-to-spend for today.
-        # If the implementation ever computed share against cap_sen instead
-        # of room_sen, 1250 / 2100 = 0.595 would read as "ok" -- the correct
-        # answer, computed against room_sen, is "over" (1250 / 1000 = 1.25).
-        places = find_places(
-            lat=KLCC_LAT,
-            lng=KLCC_LNG,
-            mode="walk",
-            halal_only=False,
-            cap_sen=2100,
-            room_sen=1000,
+    async def test_a_place_can_be_shown_by_cap_but_still_be_over_room(self, place_world):
+        # Mamak Dua costs 1250 sen (walk mode adds no travel cost). cap_sen=2100
+        # admits it into the results; room_sen=1000 means it actually costs more
+        # than the user's whole safe-to-spend for today. If the implementation
+        # ever computed share against cap_sen instead of room_sen, 1250 / 2100 =
+        # 0.595 would read as "ok" -- the correct answer, computed against
+        # room_sen, is "over" (1250 / 1000 = 1.25).
+        places = (
+            await find_places(
+                **place_world.origin,
+                mode="walk",
+                halal_only=False,
+                cap_sen=2100,
+                room_sen=1000,
+            )
         ).places
-        pelita = next(p for p in places if p.name == "Nasi Kandar Pelita")
-        assert pelita.total_sen == 1250
-        assert pelita.share == 1.25
-        assert pelita.band == "over"
+        mid = next(p for p in places if p.name == place_world.mid.name)
+        assert mid.total_sen == 1250
+        assert mid.share == 1.25
+        assert mid.band == "over"
 
-    def test_raising_cap_above_room_still_yields_tight_and_over_entries(self):
-        places = find_places(
-            lat=KLCC_LAT,
-            lng=KLCC_LNG,
-            mode="walk",
-            halal_only=False,
-            cap_sen=100_000,  # generous cap: nothing is filtered out by price
-            room_sen=1000,  # tight room: most places cost more than this
+    async def test_raising_cap_above_room_still_yields_tight_and_over_entries(self, place_world):
+        places = (
+            await find_places(
+                **place_world.origin,
+                mode="walk",
+                halal_only=False,
+                cap_sen=100_000,  # generous cap: nothing is filtered out by price
+                room_sen=1000,  # tight room: most places cost more than this
+            )
         ).places
         bands = {p.band for p in places}
         assert "tight" in bands or "over" in bands
@@ -161,33 +167,35 @@ class TestNoRoomLeft:
     """A day already spent out has no share to report, and saying so is the
     only thing that keeps a real share of 2.0 tellable from an absent one."""
 
-    def test_a_nil_room_yields_no_share_and_every_place_over(self):
-        places = find_places(
-            lat=KLCC_LAT,
-            lng=KLCC_LNG,
-            mode="walk",
-            halal_only=False,
-            cap_sen=100_000,
-            room_sen=0,
+    async def test_a_nil_room_yields_no_share_and_every_place_over(self, place_world):
+        places = (
+            await find_places(
+                **place_world.origin,
+                mode="walk",
+                halal_only=False,
+                cap_sen=100_000,
+                room_sen=0,
+            )
         ).places
         assert places
         for place in places:
             assert place.share is None
             assert place.band == "over"
 
-    def test_a_genuine_share_of_two_is_still_reported(self):
-        # Nasi Kandar Pelita costs 1250 sen against 625 sen of room: exactly the
-        # ratio the old zero-room stand-in was indistinguishable from.
-        places = find_places(
-            lat=KLCC_LAT,
-            lng=KLCC_LNG,
-            mode="walk",
-            halal_only=False,
-            cap_sen=100_000,
-            room_sen=625,
+    async def test_a_genuine_share_of_two_is_still_reported(self, place_world):
+        # Kopi Kaki costs 900 sen against 450 sen of room: exactly the ratio the
+        # old zero-room stand-in was indistinguishable from.
+        places = (
+            await find_places(
+                **place_world.origin,
+                mode="walk",
+                halal_only=False,
+                cap_sen=100_000,
+                room_sen=450,
+            )
         ).places
-        pelita = next(p for p in places if p.name == "Nasi Kandar Pelita")
-        assert pelita.share == 2.0
+        cheap = next(p for p in places if p.name == place_world.cheap.name)
+        assert cheap.share == 2.0
 
 
 class TestNearbyCount:
@@ -195,10 +203,9 @@ class TestNearbyCount:
     apart: a ceiling the user can move, a filter the user can switch off, or a
     distance neither of those will close."""
 
-    def test_it_counts_what_the_radius_held_before_the_filters_ran(self):
-        unfiltered = find_places(
-            lat=KLCC_LAT,
-            lng=KLCC_LNG,
+    async def test_it_counts_what_the_radius_held_before_the_filters_ran(self, place_world):
+        unfiltered = await find_places(
+            **place_world.origin,
             mode="walk",
             halal_only=False,
             cap_sen=100_000,
@@ -206,21 +213,21 @@ class TestNearbyCount:
         )
         assert unfiltered.nearby_count == len(unfiltered.places)
 
-        filtered = find_places(
-            lat=KLCC_LAT,
-            lng=KLCC_LNG,
+        filtered = await find_places(
+            **place_world.origin,
             mode="walk",
             halal_only=True,
-            cap_sen=1000,  # admits only Zus Coffee's 900
+            cap_sen=1000,  # admits only Kopi Kaki's 900
             room_sen=100_000,
         )
         assert len(filtered.places) < len(unfiltered.places)
         assert filtered.nearby_count == unfiltered.nearby_count
 
-    def test_a_ceiling_that_admits_nothing_still_counts_the_places_in_range(self):
-        found = find_places(
-            lat=KLCC_LAT,
-            lng=KLCC_LNG,
+    async def test_a_ceiling_that_admits_nothing_still_counts_the_places_in_range(
+        self, place_world
+    ):
+        found = await find_places(
+            **place_world.origin,
             mode="walk",
             halal_only=False,
             cap_sen=1,
@@ -229,10 +236,9 @@ class TestNearbyCount:
         assert found.places == ()
         assert found.nearby_count > 0
 
-    def test_it_is_nil_where_the_seed_data_does_not_reach(self):
-        found = find_places(
-            lat=PENANG_LAT,
-            lng=PENANG_LNG,
+    async def test_it_is_nil_where_the_seed_data_does_not_reach(self, place_world):
+        found = await find_places(
+            **place_world.out_of_range,
             mode="walk",
             halal_only=False,
             cap_sen=100_000,
@@ -248,28 +254,26 @@ class TestMatchingCount:
     halal toggle they set themselves is another, and dragging the ceiling for
     it is advice that cannot work."""
 
-    def test_it_counts_what_survived_the_halal_filter_not_the_ceiling(self):
-        found = find_places(
-            lat=KLCC_LAT,
-            lng=KLCC_LNG,
+    async def test_it_counts_what_survived_the_halal_filter_not_the_ceiling(self, place_world):
+        found = await find_places(
+            **place_world.origin,
             mode="walk",
             halal_only=True,
             cap_sen=1,  # admits nothing at all
             room_sen=100_000,
         )
         assert found.places == ()
-        # Two of the eight seeded places are not halal, and the ceiling of one
+        # Two of the five places in range are not halal, and the ceiling of one
         # sen is what emptied the rest -- which is the count that says so.
-        assert found.nearby_count == 8
-        assert found.matching_count == 6
+        assert found.nearby_count == 5
+        assert found.matching_count == 3
 
-    def test_the_halal_filter_alone_can_empty_a_generous_ceiling(self):
-        # 4.9 km south of Lot 10 Hutong: it is the one seeded place in range,
-        # and it is not halal. No ceiling reaches it, because the ceiling is
-        # not what is holding it back.
-        found = find_places(
-            lat=ONLY_NON_HALAL_LAT,
-            lng=ONLY_NON_HALAL_LNG,
+    async def test_the_halal_filter_alone_can_empty_a_generous_ceiling(self, place_world):
+        # 4.9 km south of Chophouse Lima: it is the one place in range, and it
+        # is not halal. No ceiling reaches it, because the ceiling is not what
+        # is holding it back.
+        found = await find_places(
+            **place_world.lone_non_halal,
             mode="walk",
             halal_only=True,
             cap_sen=100_000,
@@ -280,24 +284,22 @@ class TestMatchingCount:
         assert found.matching_count == 0
 
         # Same spot, same ceiling, halal off: the place was there all along.
-        relaxed = find_places(
-            lat=ONLY_NON_HALAL_LAT,
-            lng=ONLY_NON_HALAL_LNG,
+        relaxed = await find_places(
+            **place_world.lone_non_halal,
             mode="walk",
             halal_only=False,
             cap_sen=100_000,
             room_sen=100_000,
         )
-        assert [p.name for p in relaxed.places] == ["Lot 10 Hutong"]
+        assert [p.name for p in relaxed.places] == [place_world.far_non_halal.name]
         assert relaxed.matching_count == 1
 
-    def test_the_counts_nest(self):
-        found = find_places(
-            lat=KLCC_LAT,
-            lng=KLCC_LNG,
+    async def test_the_counts_nest(self, place_world):
+        found = await find_places(
+            **place_world.origin,
             mode="walk",
             halal_only=True,
-            cap_sen=1000,  # admits only Zus Coffee's 900
+            cap_sen=1000,  # admits only Kopi Kaki's 900
             room_sen=100_000,
         )
         assert found.nearby_count >= found.matching_count >= len(found.places)
@@ -305,48 +307,72 @@ class TestMatchingCount:
 
 
 class TestTravelCost:
-    def test_walk_mode_adds_no_travel_cost(self):
+    async def test_walk_mode_adds_no_travel_cost(self, place_world):
         # walk has base=0 and per_km=0, so travel_sen is always 0 regardless
         # of distance, and total_sen equals the place's own estimate.
-        places = find_places(
-            lat=KLCC_LAT,
-            lng=KLCC_LNG,
-            mode="walk",
-            halal_only=False,
-            cap_sen=100_000,
-            room_sen=100_000,
+        places = (
+            await find_places(
+                **place_world.origin,
+                mode="walk",
+                halal_only=False,
+                cap_sen=100_000,
+                room_sen=100_000,
+            )
         ).places
         for place in places:
             assert place.travel_sen == 0
 
-    def test_ride_mode_adds_a_base_fare_and_per_km_cost(self):
-        places = find_places(
-            lat=KLCC_LAT,
-            lng=KLCC_LNG,
-            mode="ride",
-            halal_only=False,
-            cap_sen=100_000,
-            room_sen=100_000,
+    async def test_ride_mode_adds_a_base_fare_and_per_km_cost(self, place_world):
+        places = (
+            await find_places(
+                **place_world.origin,
+                mode="ride",
+                halal_only=False,
+                cap_sen=100_000,
+                room_sen=100_000,
+            )
         ).places
-        # Suria KLCC food court sits at the search origin itself (km < 0.12),
-        # so even ride mode charges nothing for "already there".
-        food_court = next(p for p in places if p.name == "Suria KLCC food court")
-        assert food_court.km < 0.12
-        assert food_court.travel_sen == 0
+        # Kopi Kaki is 50 m from the search origin (km < 0.12), so even ride
+        # mode charges nothing for "already there".
+        doorstep = next(p for p in places if p.name == place_world.cheap.name)
+        assert doorstep.km < 0.12
+        assert doorstep.travel_sen == 0
 
         # Anything further away pays ride's base fare plus per-km cost.
-        farther = next(p for p in places if p.name == "Nasi Lemak Antarabangsa")
+        farther = next(p for p in places if p.name == place_world.mid.name)
         assert farther.km >= 0.12
         assert farther.travel_sen > 0
 
-    def test_the_fare_is_whole_sen_carried_up_not_a_rounded_float(self):
+    async def test_every_outing_carries_the_six_minute_buffer_on_top_of_the_travel(
+        self, place_world
+    ):
+        """Ordering, queueing and eating are in none of the mode speeds.
+
+        So six minutes is added to every outing in every mode, including one at
+        the search origin itself -- and transit's seven-minute wait sits on top
+        of that buffer rather than standing in for it.
+        """
+        origin_lat = place_world.origin["lat"]
+        origin_lng = place_world.origin["lng"]
+        doorstep = Place(
+            "t2", "Right here", "Test", origin_lat, origin_lng, Money(1000), "high", True, ""
+        )
+        walked = evaluate_place(doorstep, origin_lat, origin_lng, "walk", 100_000)
+        assert walked.km < 0.001
+        assert walked.minutes == 6
+
+        ridden = evaluate_place(doorstep, origin_lat, origin_lng, "transit", 100_000)
+        assert ridden.minutes == 13  # 7 minutes of waiting, then the same buffer
+
+    async def test_the_fare_is_whole_sen_carried_up_not_a_rounded_float(self, place_world):
         """money.py forbids float arithmetic and Python's round() on money.
 
         150 m of a ride is exactly 28.5 sen of per-km charge on top of the
         RM5.00 base. round() takes a half to even and yields 528; the half-up
         rounding the rest of the app uses yields 529, which is the fare.
         """
-        origin_lat, origin_lng = KLCC_LAT, KLCC_LNG
+        origin_lat = place_world.origin["lat"]
+        origin_lng = place_world.origin["lng"]
         place = Place(
             "t1",
             "Exactly 150 m away",
@@ -364,3 +390,324 @@ class TestTravelCost:
         assert evaluated.travel_sen == 529
         assert isinstance(evaluated.travel_sen, int)
         assert evaluated.total_sen == 1529
+
+
+class TestTheDistanceThatIsCharged:
+    """The defect this work replaces, written as the two numbers it produced.
+
+    Bangsar to a shop at 3.095396,101.675218 is 3.71 km of great circle and
+    8.10 km of road. A ride is RM5.00 plus RM1.90 a kilometre, so the same
+    journey is RM12.05 measured one way and RM20.39 measured the other -- and
+    only the second is what the driver charges. The great circle is not a
+    conservative estimate of a road; it is an unreachable lower bound on one.
+    """
+
+    ORIGIN_LAT = 3.1285
+    ORIGIN_LNG = 101.6709
+
+    def shop(self) -> Place:
+        return Place("s1", "The shop", "Grocer", 3.095396, 101.675218, Money(0), "high", True, "")
+
+    def test_the_straight_line_understates_a_real_kl_ride(self):
+        straight = evaluate_place(self.shop(), self.ORIGIN_LAT, self.ORIGIN_LNG, "ride", 100_000)
+        assert round(straight.km, 2) == 3.71
+        assert straight.travel_sen == 1205  # RM12.05
+        assert straight.distance_basis == "straight_line"
+        assert straight.road_km is None
+
+    def test_the_road_figure_is_the_one_the_fare_is_built_on(self):
+        routed = evaluate_place(
+            self.shop(),
+            self.ORIGIN_LAT,
+            self.ORIGIN_LNG,
+            "ride",
+            100_000,
+            road_metres=8101.0,
+        )
+        assert routed.travel_sen == 2039  # RM20.39, near twice the other figure
+        assert routed.distance_basis == "road"
+        assert routed.road_km == 8.101
+        # km is whatever the fare was computed from, so a client reading it is
+        # reading the same distance the money came out of.
+        assert routed.km == 8.101
+
+    def test_the_clock_moves_with_the_fare(self):
+        # Travel time is distance times a per-km speed, so a road figure that
+        # doubles the distance has to move the minutes too -- otherwise the
+        # screen says RM20 and fourteen minutes, which is not a journey.
+        straight = evaluate_place(self.shop(), self.ORIGIN_LAT, self.ORIGIN_LNG, "ride", 100_000)
+        routed = evaluate_place(
+            self.shop(),
+            self.ORIGIN_LAT,
+            self.ORIGIN_LNG,
+            "ride",
+            100_000,
+            road_metres=8101.0,
+        )
+        assert straight.minutes == 23
+        assert routed.minutes == 37
+
+    def test_the_road_fare_is_still_whole_sen_carried_up(self):
+        """money.py forbids float arithmetic and Python's round() on money, and
+        that does not change because the metres came off a network.
+
+        150 m of a ride is exactly 28.5 sen of per-km charge. round() takes the
+        half to even and yields 528; half-up yields 529, which is the fare.
+        """
+        evaluated = evaluate_place(
+            self.shop(),
+            self.ORIGIN_LAT,
+            self.ORIGIN_LNG,
+            "ride",
+            100_000,
+            road_metres=150.0,
+        )
+        assert evaluated.travel_sen == 529
+        assert isinstance(evaluated.travel_sen, int)
+
+    def test_a_place_on_the_doorstep_by_road_is_still_free(self):
+        # The under-120-metre rule is about being already there, and the road
+        # is the distance that decides it now.
+        evaluated = evaluate_place(
+            self.shop(),
+            self.ORIGIN_LAT,
+            self.ORIGIN_LNG,
+            "ride",
+            100_000,
+            road_metres=110.0,
+        )
+        assert evaluated.km < 0.12
+        assert evaluated.travel_sen == 0
+        assert evaluated.distance_basis == "road"
+
+
+class TestWithNoRouter:
+    """The offline half. Every figure is the straight line, and says so."""
+
+    async def test_every_place_is_labelled_straight_line(self, place_world):
+        found = await find_places(
+            **place_world.origin,
+            mode="ride",
+            halal_only=False,
+            cap_sen=100_000,
+            room_sen=100_000,
+        )
+        assert found.places
+        for place in found.places:
+            assert place.distance_basis == "straight_line"
+            assert place.road_km is None
+
+    async def test_the_fares_are_the_ones_the_great_circle_gives(self, place_world):
+        found = await find_places(
+            **place_world.origin,
+            mode="ride",
+            halal_only=False,
+            cap_sen=100_000,
+            room_sen=100_000,
+        )
+        fares = {p.name: p.travel_sen for p in found.places}
+        assert fares[place_world.cheap.name] == 0  # 50 m: already there
+        assert fares[place_world.mid.name] == 595  # 500 m
+        assert fares[place_world.near_non_halal.name] == 690  # 1 km
+        assert fares[place_world.pricey.name] == 880  # 2 km
+        assert fares[place_world.far_non_halal.name] == 1260  # 4 km
+
+
+class TestWithARouter:
+    """The online half, against a router with fixed answers in road metres."""
+
+    async def test_the_fare_and_the_minutes_come_from_the_road(self, place_world):
+        # Mamak Dua is 500 m in a straight line and 1.2 km of road.
+        with serving(StubRouting({"w2": 1200.0})):
+            found = await find_places(
+                **place_world.origin,
+                mode="ride",
+                halal_only=False,
+                cap_sen=100_000,
+                room_sen=100_000,
+            )
+        mid = next(p for p in found.places if p.name == place_world.mid.name)
+
+        assert mid.distance_basis == "road"
+        assert mid.road_km == 1.2
+        assert mid.km == 1.2
+        assert mid.travel_sen == 728  # not the 595 the straight line gives
+        assert mid.minutes == 15
+        assert mid.total_sen == 1250 + 728
+
+    async def test_the_ceiling_is_applied_after_the_road_distance(self, place_world):
+        """The order that makes this worth doing.
+
+        Mamak Dua costs RM12.50 plus RM5.95 of straight-line fare -- RM18.45,
+        under a RM19.00 ceiling. By road it is RM7.28 of fare and RM19.78,
+        which is over it. Filtering before routing would have shown the user a
+        place they cannot afford, at a price that was never available.
+        """
+        cap_sen = 1900
+        with serving(StubRouting({"w2": 1200.0})):
+            routed = await find_places(
+                **place_world.origin,
+                mode="ride",
+                halal_only=False,
+                cap_sen=cap_sen,
+                room_sen=100_000,
+            )
+        assert place_world.mid.name not in {p.name for p in routed.places}
+        assert all(p.total_sen <= cap_sen for p in routed.places)
+        # It is the road distance that excluded it, not the ceiling being tight:
+        # with no router the same search shows it.
+        unrouted = await find_places(
+            **place_world.origin,
+            mode="ride",
+            halal_only=False,
+            cap_sen=cap_sen,
+            room_sen=100_000,
+        )
+        assert place_world.mid.name in {p.name for p in unrouted.places}
+        # And it stayed in matching_count either way, so the counts still say
+        # the ceiling is what the user could move.
+        assert routed.matching_count == unrouted.matching_count
+
+    async def test_the_sort_follows_the_road_totals(self, place_world):
+        # Omakase Empat is dearer than everything even before travel, so the
+        # interesting swap is between the two mid-priced places: Bak Kut Teh
+        # Tiga (RM16.00 + RM6.90 = RM22.90 straight) sits under Chophouse Lima
+        # (RM20.00 + RM12.60 = RM32.60) until the road puts it the other way.
+        with serving(StubRouting({"w3": 9000.0, "w5": 4200.0})):
+            found = await find_places(
+                **place_world.origin,
+                mode="ride",
+                halal_only=False,
+                cap_sen=100_000,
+                room_sen=100_000,
+            )
+        totals = [p.total_sen for p in found.places]
+        assert totals == sorted(totals)
+        order = [p.name for p in found.places]
+        assert order.index(place_world.far_non_halal.name) < order.index(
+            place_world.near_non_halal.name
+        )
+
+    async def test_it_asks_the_router_once_for_everything_that_survived_the_filters(
+        self, place_world
+    ):
+        stub = StubRouting({})
+        with serving(stub):
+            found = await find_places(
+                **place_world.origin,
+                mode="ride",
+                halal_only=True,
+                cap_sen=100_000,
+                room_sen=100_000,
+            )
+        assert len(stub.calls) == 1, "one search is one round trip, however many places"
+        origin, destinations = stub.calls[0]
+        assert origin == (place_world.origin["lat"], place_world.origin["lng"])
+        # Three of the five are halal. The two the filter removed are never sent
+        # to the router: a place that will not be shown is not worth a distance.
+        assert len(destinations) == found.matching_count == 3
+
+    async def test_nothing_in_range_asks_the_router_nothing_useful(self, place_world):
+        stub = StubRouting({})
+        with serving(stub):
+            found = await find_places(
+                **place_world.out_of_range,
+                mode="ride",
+                halal_only=False,
+                cap_sen=100_000,
+                room_sen=100_000,
+            )
+        assert found.places == ()
+        assert stub.calls == [] or stub.calls[0][1] == []
+
+
+class TestAPartlyAnsweredSearch:
+    """A router can route one destination and fail on the next, so the basis is
+    per place. A single flag for the whole list would have to lie about half of
+    it, and the half it lied about would be the half quoting a fare it cannot
+    stand behind."""
+
+    async def test_each_place_carries_the_basis_it_was_actually_measured_on(self, place_world):
+        # Two of the five answered; the rest came back null.
+        with serving(StubRouting({"w2": 1200.0, "w4": 4500.0})):
+            found = await find_places(
+                **place_world.origin,
+                mode="ride",
+                halal_only=False,
+                cap_sen=100_000,
+                room_sen=100_000,
+            )
+        by_name = {p.name: p for p in found.places}
+        bases = {name: place.distance_basis for name, place in by_name.items()}
+
+        assert bases[place_world.mid.name] == "road"
+        assert bases[place_world.pricey.name] == "road"
+        assert bases[place_world.near_non_halal.name] == "straight_line"
+        assert bases[place_world.far_non_halal.name] == "straight_line"
+        assert len(set(bases.values())) == 2, "one list, two bases"
+
+    async def test_the_routed_ones_are_priced_on_the_road_and_the_rest_are_not(self, place_world):
+        with serving(StubRouting({"w2": 1200.0, "w4": 4500.0})):
+            found = await find_places(
+                **place_world.origin,
+                mode="ride",
+                halal_only=False,
+                cap_sen=100_000,
+                room_sen=100_000,
+            )
+        fares = {p.name: p.travel_sen for p in found.places}
+        road_km = {p.name: p.road_km for p in found.places}
+
+        assert fares[place_world.mid.name] == 728  # 1.2 km of road
+        assert fares[place_world.pricey.name] == 1355  # 4.5 km of road
+        assert road_km[place_world.mid.name] == 1.2
+        assert road_km[place_world.pricey.name] == 4.5
+
+        # Unanswered: the straight-line fares, unchanged, and no road figure to
+        # show beside them.
+        assert fares[place_world.near_non_halal.name] == 690
+        assert fares[place_world.far_non_halal.name] == 1260
+        assert road_km[place_world.near_non_halal.name] is None
+        assert road_km[place_world.far_non_halal.name] is None
+
+
+class TestTheAddress:
+    async def test_every_place_carries_the_address_it_came_with(self, place_world):
+        found = await find_places(
+            **place_world.origin,
+            mode="walk",
+            halal_only=False,
+            cap_sen=100_000,
+            room_sen=100_000,
+        )
+        addresses = {p.name: p.address for p in found.places}
+        assert addresses[place_world.cheap.name] == place_world.cheap.address
+        assert all(addresses.values()), "a place named on a screen has to be findable"
+
+
+class TestARouterThatMisbehaves:
+    """A wrong-shaped answer is not a distance, and must not become one."""
+
+    async def test_an_answer_of_the_wrong_length_is_not_paired_off_anyway(self, place_world):
+        class ShortRouting:
+            """Asked about five destinations, answers about one."""
+
+            async def road_metres(self, origin, destinations):
+                return [1200.0]
+
+        with serving(ShortRouting()):
+            found = await find_places(
+                **place_world.origin,
+                mode="ride",
+                halal_only=False,
+                cap_sen=100_000,
+                room_sen=100_000,
+            )
+
+        # Which place that single figure belongs to is unknowable. Lining it up
+        # with the first destination would put one place's road on another
+        # place's fare, which is a wrong number nobody could spot. The straight
+        # line is wrong by a stated amount instead.
+        assert len(found.places) == 5
+        assert {p.distance_basis for p in found.places} == {"straight_line"}
+        assert all(p.road_km is None for p in found.places)
