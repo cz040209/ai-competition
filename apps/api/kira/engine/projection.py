@@ -6,15 +6,20 @@ user's own observed variation and reports a band and a probability per goal.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, timedelta
 
 from kira.engine.prng import Prng
+from kira.engine.safe_to_spend import safe_to_spend
 from kira.engine.types import (
     DailySpendProfile,
+    Driver,
     GoalInput,
     GoalOutlook,
     Projection,
+    Lever,
     ProjectionDay,
+    ScenarioResult,
     Simulation,
     Snapshot,
 )
@@ -218,3 +223,111 @@ def simulate(
     )
 
     return Simulation(bands=bands, outlooks=outlooks, trials=trials, seed=seed)
+
+
+def apply_lever(
+    snapshot: Snapshot, profile: DailySpendProfile, lever: Lever
+) -> tuple[Snapshot, DailySpendProfile]:
+    """One change to the plan, returned as new inputs. Neither argument is mutated."""
+    if lever.kind == "goal_monthly":
+        if not any(goal.id == lever.target_id for goal in snapshot.goals):
+            raise KeyError(f"no goal {lever.target_id!r}")
+        goals = tuple(
+            replace(goal, monthly=goal.monthly + lever.delta)
+            if goal.id == lever.target_id
+            else goal
+            for goal in snapshot.goals
+        )
+        return replace(snapshot, goals=goals), profile
+
+    if lever.kind == "commitment_amount":
+        if not any(c.id == lever.target_id for c in snapshot.commitments):
+            raise KeyError(f"no commitment {lever.target_id!r}")
+        commitments = tuple(
+            replace(c, amount=c.amount + lever.delta) if c.id == lever.target_id else c
+            for c in snapshot.commitments
+        )
+        return replace(snapshot, commitments=commitments), profile
+
+    # daily_spend: shift every observation, floored at zero. Spending less than
+    # nothing is not a plan.
+    shifted = tuple(
+        tuple(max(0, amount + lever.delta.sen) for amount in day)
+        for day in profile.by_weekday
+    )
+    return snapshot, replace(profile, by_weekday=shifted)
+
+
+def run_scenarios(
+    snapshot: Snapshot,
+    profile: DailySpendProfile,
+    levers: tuple[Lever, ...],
+    days: int,
+    trials: int = DEFAULT_TRIALS,
+    seed: int = DEFAULT_SEED,
+) -> tuple[ScenarioResult, ...]:
+    """Each lever, simulated under the same seed so only the lever differs.
+
+    Two runs that differed by noise as well as by the change would not be a
+    comparison.
+    """
+    results: list[ScenarioResult] = []
+    for lever in levers:
+        moved_snapshot, moved_profile = apply_lever(snapshot, profile, lever)
+        simulation = simulate(moved_snapshot, moved_profile, days, trials=trials, seed=seed)
+        results.append(
+            ScenarioResult(
+                lever=lever,
+                outlooks=simulation.outlooks,
+                safe_today_after=safe_to_spend(moved_snapshot).safe_today,
+            )
+        )
+    return tuple(results)
+
+
+def _probability_for(outlooks: tuple[GoalOutlook, ...], goal_id: str) -> int | None:
+    for outlook in outlooks:
+        if outlook.goal_id == goal_id:
+            return outlook.probability_bp
+    return None
+
+
+def drivers(
+    snapshot: Snapshot,
+    profile: DailySpendProfile,
+    goal_id: str,
+    candidates: tuple[Lever, ...],
+    days: int,
+    trials: int = DEFAULT_TRIALS,
+    seed: int = DEFAULT_SEED,
+) -> tuple[Driver, ...]:
+    """Rank candidate changes by basis points of probability bought per ringgit.
+
+    Per-ringgit rather than absolute on purpose: "put another RM500 a month in"
+    is true, and useless.
+    """
+    baseline = simulate(snapshot, profile, days, trials=trials, seed=seed)
+    before = _probability_for(baseline.outlooks, goal_id)
+    if before is None:
+        return ()
+
+    ranked: list[Driver] = []
+    for lever in candidates:
+        moved_snapshot, moved_profile = apply_lever(snapshot, profile, lever)
+        after = _probability_for(
+            simulate(moved_snapshot, moved_profile, days, trials=trials, seed=seed).outlooks,
+            goal_id,
+        )
+        if after is None:
+            continue
+        ringgit = abs(lever.delta.sen) // 100
+        ranked.append(
+            Driver(
+                lever=lever,
+                probability_bp_before=before,
+                probability_bp_after=after,
+                bp_per_ringgit=(after - before) // ringgit if ringgit else 0,
+            )
+        )
+
+    return tuple(sorted(ranked, key=lambda driver: driver.bp_per_ringgit, reverse=True))
