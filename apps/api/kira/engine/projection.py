@@ -45,15 +45,26 @@ def _daily_goal_accrual(snapshot: Snapshot) -> Money:
     )
 
 
-def _commitments_by_day(snapshot: Snapshot) -> dict[date, Money]:
-    """Bills still ahead of us. Anything already due has already been paid."""
+def _commitments_by_day(snapshot: Snapshot, days: int) -> dict[date, Money]:
+    """Every bill that falls inside the horizon, including the ones that recur.
+
+    A commitment carries a single due date, because ``safe_to_spend`` never
+    looks past one payday and so never had to decide. A projection does: rent
+    is due every cycle, and charging it once would have the user living rent
+    free for the rest of the horizon.
+    """
     currency = snapshot.currency
+    last = snapshot.today + timedelta(days=days)
+    step = timedelta(days=snapshot.cycle_days)
     due: dict[date, Money] = {}
     for commitment in snapshot.commitments:
-        if commitment.due_date > snapshot.today:
-            due[commitment.due_date] = (
-                due.get(commitment.due_date, Money.zero(currency)) + commitment.amount
-            )
+        when = commitment.due_date
+        # Bills already behind us are paid; walk forward to the next occurrence.
+        while when <= snapshot.today:
+            when += step
+        while when <= last:
+            due[when] = due.get(when, Money.zero(currency)) + commitment.amount
+            when += step
     return due
 
 
@@ -67,7 +78,7 @@ def project(snapshot: Snapshot, profile: DailySpendProfile, days: int) -> Projec
     currency = snapshot.currency
     paydays = _payday_dates(snapshot, days)
     accrual = _daily_goal_accrual(snapshot)
-    due = _commitments_by_day(snapshot)
+    due = _commitments_by_day(snapshot, days)
 
     walked: list[ProjectionDay] = []
     balance = snapshot.balance

@@ -183,6 +183,13 @@ Income lands on `next_payday` and every `cycle_days` thereafter. The default of
 zero means every existing golden fixture and `safe_to_spend` itself are
 untouched.
 
+**Commitments recur.** A `CommitmentInput` carries a single due date, because
+`safe_to_spend` never looks past one payday and so never had to decide. A
+projection does: the engine charges each commitment every `cycle_days` across
+the horizon. Charging rent once would forecast a user living rent-free for five
+of the next six months — a five-figure error at a 180-day horizon, and the
+reason an early build showed every goal as trivially fundable.
+
 **How a goal is funded in the projection.** On each payday, a goal receives its
 monthly contribution if the balance after that cycle's commitments covers it,
 and otherwise receives what is left. A goal's probability is the share of trials
@@ -387,6 +394,21 @@ anything is built on top of it.
 
 **A probability read as a promise** — mitigated by labelling the assumption on the
 surface (§6.4), not by weakening the claim.
+
+**Goal probability is close to a step function.** Contributions accrue at a
+fixed daily rate that the balance almost always covers, so `saved` at the target
+date barely varies between trials: the probability jumps from near 0 to near 100
+across a few days of target date. The spending variance the simulation models
+never reaches the goal, because the two do not compete for the same money until
+the balance approaches the buffer. This is an honest limitation, not a bug, and
+it is stated rather than tuned away.
+
+The named improvement, if it proves to matter, is a **block bootstrap**:
+resample whole weeks rather than independent days, so the autocorrelation in
+real spending — heavy weeks follow heavy weeks — survives into the horizon
+instead of averaging out. That widens the tails materially over 180 days and
+would make the probability a curve rather than a step. It is deliberately not
+built yet.
 
 **Seed realism** — a hand-written track record would be transparently false. The
 seed generates its advice rows with the real engine (§4). If Kira's demo track

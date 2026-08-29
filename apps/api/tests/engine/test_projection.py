@@ -105,3 +105,24 @@ def test_a_horizon_must_be_positive():
 def test_a_horizon_must_be_an_int():
     with pytest.raises(TypeError):
         project(snapshot(), FLAT, "90")
+
+
+def test_a_commitment_recurs_every_cycle_across_the_horizon():
+    """Rent is due every month. Charging it once would forecast a rent-free life."""
+    result = project(
+        snapshot(commitments=(CommitmentInput("rent", Money(120000), date(2026, 9, 5)),)),
+        NOTHING,
+        95,
+    )
+    landed = [d.on for d in result.days if d.commitments_due.sen > 0]
+    assert landed == [date(2026, 9, 5), date(2026, 10, 5), date(2026, 11, 4), date(2026, 12, 4)]
+
+
+def test_a_commitment_already_past_recurs_from_its_next_occurrence():
+    result = project(
+        snapshot(commitments=(CommitmentInput("old", Money(50000), date(2026, 8, 30)),)),
+        NOTHING,
+        35,
+    )
+    landed = [d.on for d in result.days if d.commitments_due.sen > 0]
+    assert landed == [date(2026, 9, 29)]
