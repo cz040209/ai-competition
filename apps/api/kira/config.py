@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     butler_max_tool_iterations: int = 6
     butler_request_timeout_seconds: float = 30.0
     butler_memory_limit: int = 40
+    # The Plan screen's ask box. Far shorter than the Butler's own timeout above,
+    # because the two are waited on differently: a conversation may take its time
+    # and shows tokens arriving, where this one holds a screen of live figures
+    # still and has nothing to show while it does.
+    day_plan_interpret_timeout_seconds: float = 6.0
     # Voice and camera capture. Off means the affordances stay hidden rather
     # than pretending to work; the adapters behind them are chosen in the
     # adapter registry, not here.

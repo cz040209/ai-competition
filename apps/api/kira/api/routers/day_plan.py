@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, status
 
+from kira.agent import plan_intent
 from kira.api.deps import CurrentUser, SessionDep
-from kira.api.schemas import DayPlanResponse, PlanDraftRequest, TransactionResponse
+from kira.api.schemas import (
+    DayPlanInterpretRequest,
+    DayPlanInterpretResponse,
+    DayPlanResponse,
+    PlanDraftRequest,
+    TransactionResponse,
+)
 from kira.services.clock import today_for
 from kira.services.dashboard import today_dashboard
 from kira.services.day_plan import add_to_today, find_places
@@ -46,6 +54,38 @@ async def get_places(
         "nearby_count": found.nearby_count,
         "matching_count": found.matching_count,
         "places": found.places,
+    }
+
+
+@router.post("/interpret", response_model=DayPlanInterpretResponse)
+async def interpret_filters(body: DayPlanInterpretRequest, user: CurrentUser) -> dict:
+    """Read a sentence into the screen's own filters. It writes nothing.
+
+    The controls are the answer. Nothing here composes prose about the places
+    themselves, because a paragraph sitting above the chips would be a second
+    account of the same list with no way to tell which one the rows came from —
+    where a chip that turned itself on is a reading the user can see and undo.
+
+    Either the whole filter set comes back or none of it does. The origin is
+    echoed from the request untouched: it belongs to the device or to the KLCC
+    fallback, and a model naming somewhere the user did not is the fabrication
+    this refuses outright.
+    """
+    current = plan_intent.Filters(
+        lat=body.lat,
+        lng=body.lng,
+        mode=body.mode,
+        halal_only=body.halal_only,
+        cap_sen=body.cap_sen,
+        sort=body.sort,
+    )
+    read = await plan_intent.interpret(body.text, current, currency=user.currency)
+    return {
+        "applied": read.filters is not None,
+        "filters": None if read.filters is None else asdict(read.filters),
+        "understood": read.understood,
+        "unread": read.unread,
+        "reason": read.reason,
     }
 
 

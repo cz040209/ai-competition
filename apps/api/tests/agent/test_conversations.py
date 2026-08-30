@@ -7,6 +7,9 @@ not the model's prose.
 
 from __future__ import annotations
 
+import pytest
+
+from kira.agent.llm import _amount_sen
 from kira.agent.run import run_turn
 from kira.db.models import TXN_CONFIRMED, TXN_DRAFT, Transaction
 from kira.money import Money
@@ -194,3 +197,112 @@ class TestWhereToEat:
         result = await ask(session, butler, today, "I'm hungry, where should I go?")
         assert "RM" in result.answer
         assert "estimate" in result.answer.lower()
+
+
+class TestWhatTheOfflinePlannerDoesWithTheRequest:
+    """"Somewhere halal under RM15" used to reach the planner as no arguments.
+
+    The list came back unfiltered and the answer read as though the whole
+    sentence had been understood, which on halal is a wrong answer rather than
+    a wide one. These run against the fixed world rather than the shipped KL
+    set: two of its five places are not halal, which is what makes a dropped
+    filter something a test can see instead of something to take on trust.
+    """
+
+    async def test_a_halal_request_leaves_the_others_out(
+        self, session, butler, today, place_world
+    ):
+        result = await ask(session, butler, today, "Where can I eat somewhere halal nearby?")
+        assert place_world.near_non_halal.name not in result.answer
+        assert place_world.far_non_halal.name not in result.answer
+
+    async def test_the_same_search_without_the_word_returns_them(
+        self, session, butler, today, place_world
+    ):
+        # The other half of the pair. Without it, a filter that had quietly
+        # stopped working would still pass the test above.
+        result = await ask(session, butler, today, "Where can I eat nearby?")
+        assert place_world.near_non_halal.name in result.answer
+
+    async def test_a_price_in_the_request_becomes_the_ceiling(
+        self, session, butler, today, place_world
+    ):
+        # RM10 is a hundred times 10, and the gap between the two survivors is
+        # RM3.50 -- so a ceiling read in ringgit, or not read at all, changes
+        # which names come back.
+        result = await ask(session, butler, today, "Where can I eat for under RM10?")
+        assert place_world.cheap.name in result.answer
+        assert place_world.mid.name not in result.answer
+
+    async def test_it_states_what_it_read_and_that_it_read_nothing_else(
+        self, session, butler, today, place_world
+    ):
+        result = await ask(session, butler, today, "Where can I eat somewhere halal under RM15?")
+        assert "I read halal only and a ceiling of RM15, and nothing else" in result.answer
+        assert "any other condition in it went unread" in result.answer
+
+    async def test_a_request_it_cannot_read_is_answered_as_one_it_could_not_read(
+        self, session, butler, today, place_world
+    ):
+        result = await ask(session, butler, today, "Where can I eat somewhere quiet with a view?")
+        assert "I found neither in what you asked" in result.answer
+        assert "nothing in it narrowed this" in result.answer
+
+    async def test_a_ceiling_it_was_given_is_not_narrated_as_todays_room(
+        self, session, butler, today, place_world
+    ):
+        # RM1 admits nothing, and the reason it admits nothing is the user's own
+        # ceiling. Today has RM52.97, and saying otherwise would be a claim
+        # about their money that no figure here supports.
+        result = await ask(session, butler, today, "Where can I eat for under RM1?")
+        assert "the ceiling I read out of what you asked" in result.answer
+        assert "today itself has room for RM52.97" in result.answer
+
+    async def test_it_names_a_place_it_actually_found(
+        self, session, butler, today, place_world
+    ):
+        # Kopi Kaki is RM9 and 50 m away, so walking is free and the whole
+        # outing is the meal. A price range with no name attached is the answer
+        # this is here to rule out.
+        result = await ask(session, butler, today, "Where can I eat somewhere halal nearby?")
+        assert f"{place_world.cheap.name} — RM9 " in result.answer
+
+
+class TestReadingAnAmountOutOfASentence:
+    """The offline parser against the way this app writes ringgit at the user.
+
+    ``Money.ringgit_str`` groups thousands and the house style in
+    ``kira.agent.prompt`` says RM1,234.56, so a user quoting a figure back at
+    the Butler is quoting one with a group separator in it. Reading that comma
+    as a decimal point divides the amount by a thousand, which offline made
+    "can I afford RM1,500" a question about RM1.50 — answered yes, in earnest.
+    """
+
+    @pytest.mark.parametrize(
+        ("text", "sen"),
+        [
+            ("can I afford RM15?", 1500),
+            ("can I afford RM15.50?", 1550),
+            ("can I afford RM 15?", 1500),
+            ("can I afford 15 ringgit?", 1500),
+            # The group separator, which is the one that was wrong.
+            ("can I afford RM1,500?", 150_000),
+            ("can I afford RM1,200.00?", 120_000),
+            ("can I afford RM1,234,567?", 123_456_700),
+            # And the decimal comma it has to stay told apart from.
+            ("can I afford RM15,50?", 1550),
+            ("can I afford RM1,5?", 150),
+        ],
+    )
+    def test_what_a_written_amount_is_worth(self, text, sen):
+        assert _amount_sen(text) == sen
+
+    async def test_a_grouped_ceiling_is_not_divided_by_a_thousand(
+        self, session, butler, today, place_world
+    ):
+        # Every place in the fixed world is under RM1,500 and none is under
+        # RM1.50, so which of the two the parser read is the difference between
+        # a full list and an empty one.
+        result = await ask(session, butler, today, "Where can I eat under RM1,500?")
+        assert "a ceiling of RM1,500" in result.answer
+        assert place_world.cheap.name in result.answer

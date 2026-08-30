@@ -139,6 +139,60 @@ class PlanDraftRequest(BaseModel):
     confidence: str = Field(min_length=1, max_length=16)
 
 
+class DayPlanFilters(ResponseModel):
+    """The Plan screen's controls, in one shape.
+
+    The same shape goes both ways: it is the state the screen is in when it
+    asks, and the state it should be in afterwards. ``lat``/``lng`` travel with
+    it because a ceiling means nothing without knowing where the list was
+    measured from — but they are only ever echoed back, never rewritten. See
+    ``DayPlanInterpretResponse``.
+    """
+
+    lat: float
+    lng: float
+    mode: Literal["walk", "transit", "ride"] = "walk"
+    halal_only: bool = False
+    # Null means the screen is carrying no ceiling of its own and today's
+    # safe-to-spend is standing in for one.
+    cap_sen: int | None = Field(default=None, gt=0)
+    sort: Literal["balanced", "cheapest", "closest"] = "balanced"
+
+
+class DayPlanInterpretRequest(DayPlanFilters):
+    """One sentence, and the controls it is to be read against.
+
+    The current state is sent with the sentence rather than assumed, because
+    most sentences only speak to one or two controls and the rest have to come
+    back untouched.
+    """
+
+    text: str = Field(min_length=1, max_length=280)
+
+
+class DayPlanInterpretResponse(ResponseModel):
+    """What the sentence came to, and whether any of it may be applied.
+
+    ``filters`` is the whole new control state or it is null. There is no
+    partial answer: a client that applied half of a request would be showing a
+    list the user reads as the answer to all of it.
+
+    ``understood`` is the short line to show back, so a misreading is visible
+    and can be corrected by tapping the chip it got wrong. It is built from the
+    filters themselves, so it cannot describe a setting other than the one
+    being applied. ``unread`` is whatever part of the sentence produced no
+    filter — a place name, most often, since the origin is not the model's to
+    set. ``reason`` says why nothing was applied, and is empty when something
+    was.
+    """
+
+    applied: bool
+    filters: DayPlanFilters | None
+    understood: str
+    unread: str
+    reason: str
+
+
 class DashboardTodayResponse(ResponseModel):
     date: date
     display_name: str

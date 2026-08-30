@@ -219,6 +219,25 @@ async def find_places(
     )
 
 
+class UnknownPlace(LookupError):
+    """No place with that id sits within range of where the plan was built."""
+
+
+def find_place(place_id: str, *, lat: float, lng: float, radius_km: float = 5.0) -> Place | None:
+    """The place a plan row's id names, or None if nothing around here is it.
+
+    Scoped to the same search the plan came from rather than to the whole
+    curated set, and on purpose. An id is a handle on a row somebody was shown;
+    one resolved from the other side of the city would put a place on today
+    that never appeared in any list. The radius defaults to ``find_places``'s
+    own, so an id that came out of a plan resolves back through it.
+    """
+    for place in get_adapters().maps.places_near(lat, lng, radius_km):
+        if place.id == place_id:
+            return place
+    return None
+
+
 # ── Adding a plan to today ────────────────────────────────────────────────────
 
 # Every place the planner knows is somewhere to eat, so a planned outing is

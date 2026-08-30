@@ -115,6 +115,13 @@ async def approval(
             "applied": None,
         }
 
+    # Re-read from the arguments that are actually about to run. An edit changes
+    # what the write does, and a summary composed before the interrupt describes
+    # the proposal it replaced -- so leaving it standing would file the audit
+    # event, settle the row and confirm back to the user in the words of a change
+    # nobody made. On an accept the two are the same string.
+    summary = spec.summarise(args)
+
     blocked = await refusal_for(
         context.session, context.user, spec.name, args.model_dump(mode="json")
     )
@@ -144,6 +151,7 @@ async def approval(
         row,
         applied=True,
         args=args.model_dump(mode="json"),
+        summary=summary,
         audit_event_id=event.id,
     )
 

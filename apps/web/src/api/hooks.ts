@@ -5,6 +5,8 @@ import type {
   CaptureAvailability,
   DashboardToday,
   DayPlan,
+  DayPlanAsk,
+  DayPlanReading,
   Memory,
   PlanDraft,
   TokenResponse,
@@ -87,6 +89,21 @@ export function useDayPlan(params: DayPlanParams) {
       const before = (previousQuery?.queryKey as DayPlanKey | undefined)?.[1];
       return before && sameSearch(before, params) ? previous : undefined;
     },
+  });
+}
+
+/**
+ * Read a sentence into the day planner's own controls.
+ *
+ * Not a query, and not a write either: nothing is stored, and the answer is
+ * only worth having in reply to a sentence somebody just typed. It invalidates
+ * nothing — the list re-fetches because the controls moved, through the same
+ * `useDayPlan` key as a tapped chip, which is the point of the whole endpoint.
+ * A hook that fetched its own places here would be a second list.
+ */
+export function useInterpretDayPlan() {
+  return useMutation<DayPlanReading, Error, DayPlanAsk>({
+    mutationFn: (ask) => api.post<DayPlanReading>("/v1/day-plan/interpret", ask),
   });
 }
 

@@ -494,6 +494,17 @@ input.field:focus{outline:2px solid var(--brass);outline-offset:2px;}
 .cap-ticks{display:flex;justify-content:space-between;margin-top:9px;font-size:10.5px;font-weight:700;
   letter-spacing:.06em;color:rgba(233,237,233,.45);}
 
+/* The ask box is an input method for the filters below it, so it sits with
+   them rather than looking like a chat: no avatar, no bubble, no reply. */
+.askbar{display:flex;gap:8px;align-items:center;background:var(--surface);border:1px solid var(--line-2);
+  border-radius:16px;padding:5px 5px 5px 14px;box-shadow:var(--shadow-sm);transition:border-color .3s;}
+.askbar:focus-within{border-color:var(--brass);}
+.askbar input{flex:1;min-width:0;background:none;border:none;outline:none;color:var(--ink);
+  font-family:inherit;font-size:13.5px;padding:10px 0;}
+.askbar input::placeholder{color:var(--muted-2);}
+.askbar input:disabled{opacity:.55;}
+.ask-said{margin:10px 2px 0;font-size:12px;line-height:1.5;color:var(--muted);}
+
 .filters{display:flex;gap:7px;flex-wrap:wrap;margin-top:14px;}
 .fchip{padding:8px 13px;border-radius:100px;font-size:12px;font-weight:700;letter-spacing:-.01em;
   border:1px solid var(--line-2);color:var(--ink);background:var(--surface);

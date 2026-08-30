@@ -3,7 +3,12 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { DayPlan as DayPlanData, Place, Transaction } from "@kira/contracts";
+import type {
+  DayPlan as DayPlanData,
+  DayPlanReading,
+  Place,
+  Transaction,
+} from "@kira/contracts";
 
 import { api } from "../api/client";
 import { DayPlan } from "./DayPlan";
@@ -186,6 +191,30 @@ const PLAN_DRAFT: Transaction = {
   note: "Planned, not spent — this is an estimate from your day plan. "
     + "Nothing counts against today until you confirm it.",
 };
+
+/**
+ * What POST /v1/day-plan/interpret answers with, defaulting to a sentence read
+ * whole. ``filters`` is the entire control state or it is null — a response
+ * carrying some of the controls is one the API cannot send, and a screen built
+ * against one would be applying half a request.
+ */
+function reading(over: Partial<DayPlanReading> = {}): DayPlanReading {
+  return {
+    applied: true,
+    filters: {
+      lat: 3.1577,
+      lng: 101.712,
+      mode: "ride",
+      halal_only: false,
+      cap_sen: 1500,
+      sort: "closest",
+    },
+    understood: "I read that as halal off, under RM15.00, by Grab, closest first.",
+    unread: "",
+    reason: "",
+    ...over,
+  };
+}
 
 /** A spent-out day, stated the way the API states it — including the counts,
  *  which a fixture that leaves them out would quietly stop exercising. */
@@ -1105,5 +1134,322 @@ describe("DayPlan · finding the shop again", () => {
     expect(await within(sheet).findByText(/turned down the copy/i)).toBeInTheDocument();
     expect(within(sheet).getByText(/Nothing was copied/i)).toBeInTheDocument();
     expect(screen.queryByText(/and its address copied/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("DayPlan · the ask box", () => {
+  /** Two POSTs share the mock, so it answers by path. */
+  function answering(answer: DayPlanReading | Error) {
+    vi.mocked(api.post).mockImplementation((path: string) =>
+      String(path).endsWith("/interpret")
+        ? answer instanceof Error
+          ? Promise.reject(answer)
+          : Promise.resolve(answer)
+        : Promise.resolve(PLAN_DRAFT),
+    );
+  }
+
+  async function askFor(sentence: string) {
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText("Say what you're after"), sentence);
+    await user.click(screen.getByRole("button", { name: "Set filters" }));
+    return user;
+  }
+
+  function ceiling(): string {
+    return (screen.getByLabelText("Spending ceiling") as HTMLInputElement).value;
+  }
+
+  it("turns a sentence into the chips, the ceiling and the sort", async () => {
+    // The whole point of the endpoint: natural language is an input method for
+    // the controls, so what it understood is a thing the user can see and tap
+    // back — not a paragraph sitting above a list it may or may not describe.
+    answering(reading());
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+
+    await askFor("cheapest ride under RM15, halal off");
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Grab" })).toHaveClass("on"));
+    expect(screen.getByRole("button", { name: "Halal" })).not.toHaveClass("on");
+    expect(screen.getByRole("button", { name: "Walk" })).not.toHaveClass("on");
+    expect(screen.getByRole("radio", { name: "Closest" })).toBeChecked();
+    expect(ceiling()).toBe("1500");
+  });
+
+  it("re-asks for the list through the ordinary query, with the new filters", async () => {
+    // No second list and no rendering of its own: the rows below re-rank
+    // because the controls moved, exactly as they do for a tapped chip.
+    answering(reading());
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+
+    await askFor("cheapest ride under RM15, halal off");
+
+    await waitFor(() => expect(lastRequestedUrl()).toContain("cap_sen=1500"));
+    expect(lastRequestedUrl()).toContain("mode=ride");
+    expect(lastRequestedUrl()).toContain("halal_only=false");
+  });
+
+  it("shows the line the server built from the filters it applied", async () => {
+    answering(reading());
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+
+    await askFor("cheapest ride under RM15, halal off");
+
+    expect(
+      await screen.findByText("I read that as halal off, under RM15.00, by Grab, closest first."),
+    ).toBeInTheDocument();
+  });
+
+  it("says what it could not place, without holding back the rest", async () => {
+    // Where the search is measured from is not the model's to set, so a place
+    // name in the sentence comes back unread rather than moving the list.
+    answering(
+      reading({
+        filters: {
+          lat: 3.1577,
+          lng: 101.712,
+          mode: "walk",
+          halal_only: true,
+          cap_sen: 1500,
+          sort: "balanced",
+        },
+        understood: "I read that as under RM15.00.",
+        unread: "near Bangsar",
+      }),
+    );
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+
+    await askFor("under RM15 near Bangsar");
+
+    expect(await screen.findByText(/I couldn't place “near Bangsar”/)).toBeInTheDocument();
+    expect(screen.getByText(/I read that as under RM15.00/)).toBeInTheDocument();
+    await waitFor(() => expect(ceiling()).toBe("1500"));
+  });
+
+  it("never moves the origin, whatever the reading carries", async () => {
+    // A location the user did not give is the one thing on this screen a model
+    // must not be able to invent: every distance below would go on being true
+    // of somewhere else.
+    answering(
+      reading({
+        filters: {
+          lat: 5.4141,
+          lng: 100.3288,
+          mode: "walk",
+          halal_only: true,
+          cap_sen: 1500,
+          sort: "balanced",
+        },
+        understood: "I read that as under RM15.00.",
+      }),
+    );
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+
+    await askFor("somewhere halal near Penang under RM15");
+
+    await waitFor(() => expect(lastRequestedUrl()).toContain("cap_sen=1500"));
+    expect(lastRequestedUrl()).toContain("lat=3.1577");
+    expect(lastRequestedUrl()).toContain("lng=101.712");
+    expect(screen.getByText("Near KLCC")).toBeInTheDocument();
+  });
+
+  it("sends the sentence with the controls exactly as they stand", async () => {
+    // Most sentences speak to one control. Without the rest going across, the
+    // ones they say nothing about would come back at the schema's defaults.
+    answering(reading());
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "LRT" }));
+    await screen.findByText("Nasi Kandar Pelita");
+
+    await askFor("halal under RM15");
+
+    expect(api.post).toHaveBeenCalledWith("/v1/day-plan/interpret", {
+      text: "halal under RM15",
+      lat: 3.1577,
+      lng: 101.712,
+      mode: "transit",
+      halal_only: true,
+      cap_sen: null,
+      sort: "balanced",
+    });
+  });
+
+  it("leaves every control exactly as it was when the sentence could not be read", async () => {
+    answering(
+      reading({
+        applied: false,
+        filters: null,
+        understood: "",
+        reason: "I could not read that into these filters. Nothing below has changed.",
+      }),
+    );
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+    const before = vi.mocked(api.get).mock.calls.length;
+
+    await askFor("mmm");
+
+    expect(
+      await screen.findByText(/could not read that into these filters/i),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Walk" })).toHaveClass("on");
+    expect(screen.getByRole("button", { name: "Halal" })).toHaveClass("on");
+    expect(screen.getByRole("button", { name: "Grab" })).not.toHaveClass("on");
+    expect(screen.getByRole("radio", { name: "Balanced" })).toBeChecked();
+    expect(ceiling()).toBe(String(ROOM_SEN));
+    // Nothing moved, so there was nothing to ask the server about again.
+    expect(vi.mocked(api.get).mock.calls.length).toBe(before);
+  });
+
+  it("leaves every control alone when the request never lands", async () => {
+    answering(new Error("network down"));
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+    const before = vi.mocked(api.get).mock.calls.length;
+
+    await askFor("halal under RM15");
+
+    expect(await screen.findByText(/the request didn't get through/i)).toBeInTheDocument();
+    expect(screen.getByText(/Nothing below has changed/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Walk" })).toHaveClass("on");
+    expect(screen.getByRole("button", { name: "Halal" })).toHaveClass("on");
+    expect(screen.getByRole("radio", { name: "Balanced" })).toBeChecked();
+    expect(ceiling()).toBe(String(ROOM_SEN));
+    expect(vi.mocked(api.get).mock.calls.length).toBe(before);
+  });
+
+  it("drops the last reading as soon as the sentence is edited", async () => {
+    // A line describing the previous sentence, sitting under a new one, reads
+    // as a line about the new one.
+    answering(reading());
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+
+    const user = await askFor("cheapest ride under RM15, halal off");
+    await screen.findByText("I read that as halal off, under RM15.00, by Grab, closest first.");
+    await user.type(screen.getByLabelText("Say what you're after"), " and quick");
+
+    expect(screen.queryByText(/I read that as/)).not.toBeInTheDocument();
+    // The chips it already set stay set: the reading is gone, not undone.
+    expect(screen.getByRole("radio", { name: "Closest" })).toBeChecked();
+  });
+
+  it("asks nothing on an empty box", async () => {
+    answering(reading());
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+
+    expect(screen.getByRole("button", { name: "Set filters" })).toBeDisabled();
+    expect(api.post).not.toHaveBeenCalled();
+  });
+});
+
+describe("DayPlan · the reading and the controls cannot contradict each other", () => {
+  function answering(answer: DayPlanReading) {
+    vi.mocked(api.post).mockImplementation((path: string) =>
+      String(path).endsWith("/interpret") ? Promise.resolve(answer) : Promise.resolve(PLAN_DRAFT),
+    );
+  }
+
+  async function askFor(sentence: string) {
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText("Say what you're after"), sentence);
+    await user.click(screen.getByRole("button", { name: "Set filters" }));
+    return user;
+  }
+
+  it("drops the reading when the user answers it by tapping a chip", async () => {
+    // The claim made for this box is that a misreading is correctable by
+    // tapping the control it got wrong. Left standing over the corrected chip,
+    // the line describes the opposite of what the list is now filtered by.
+    answering(
+      reading({
+        filters: {
+          lat: 3.1577,
+          lng: 101.712,
+          mode: "walk",
+          halal_only: true,
+          cap_sen: null,
+          sort: "balanced",
+        },
+        understood: "I read that as halal only.",
+      }),
+    );
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Halal" }));
+    await screen.findByText("Nasi Kandar Pelita");
+
+    await askFor("halal please");
+    await screen.findByText("I read that as halal only.");
+    expect(screen.getByRole("button", { name: "Halal" })).toHaveClass("on");
+
+    await user.click(screen.getByRole("button", { name: "Halal" }));
+
+    expect(screen.getByRole("button", { name: "Halal" })).not.toHaveClass("on");
+    expect(screen.queryByText("I read that as halal only.")).not.toBeInTheDocument();
+  });
+
+  it("drops the reading when the user picks a different sort", async () => {
+    answering(reading());
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+    await askFor("cheapest ride under RM15, halal off");
+    await screen.findByText("I read that as halal off, under RM15.00, by Grab, closest first.");
+
+    await userEvent.setup().click(screen.getByRole("radio", { name: "Balanced" }));
+
+    expect(screen.queryByText(/I read that as/)).not.toBeInTheDocument();
+  });
+
+  it("drops the reading when the user picks a different way to travel", async () => {
+    answering(reading());
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+    await askFor("cheapest ride under RM15, halal off");
+    await screen.findByText("I read that as halal off, under RM15.00, by Grab, closest first.");
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Walk" }));
+
+    expect(screen.queryByText(/I read that as/)).not.toBeInTheDocument();
+  });
+
+  it("drops the reading when the user drags the ceiling", async () => {
+    answering(reading());
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+    await askFor("cheapest ride under RM15, halal off");
+    await screen.findByText("I read that as halal off, under RM15.00, by Grab, closest first.");
+
+    fireEvent.change(screen.getByLabelText("Spending ceiling"), { target: { value: "2500" } });
+
+    expect(screen.queryByText(/I read that as/)).not.toBeInTheDocument();
+  });
+
+  it("keeps the chips the reading set, so clearing is not undoing", async () => {
+    answering(reading());
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+
+    await askFor("cheapest ride under RM15, halal off");
+    await waitFor(() => expect(screen.getByRole("radio", { name: "Closest" })).toBeChecked());
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Halal" }));
+
+    // The line is gone; every other control it set is still where it put it.
+    expect(screen.queryByText(/I read that as/)).not.toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Closest" })).toBeChecked();
+    expect(screen.getByRole("button", { name: "Grab" })).toHaveClass("on");
+    expect(
+      (screen.getByLabelText("Spending ceiling") as HTMLInputElement).value,
+    ).toBe("1500");
   });
 });

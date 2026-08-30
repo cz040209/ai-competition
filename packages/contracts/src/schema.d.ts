@@ -424,6 +424,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/day-plan/interpret": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Interpret Filters
+         * @description Read a sentence into the screen's own filters. It writes nothing.
+         *
+         *     The controls are the answer. Nothing here composes prose about the places
+         *     themselves, because a paragraph sitting above the chips would be a second
+         *     account of the same list with no way to tell which one the rows came from —
+         *     where a chip that turned itself on is a reading the user can see and undo.
+         *
+         *     Either the whole filter set comes back or none of it does. The origin is
+         *     echoed from the request untouched: it belongs to the device or to the KLCC
+         *     fallback, and a model naming somewhere the user did not is the fabrication
+         *     this refuses outright.
+         */
+        post: operations["interpret_filters_v1_day_plan_interpret_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/day-plan/drafts": {
         parameters: {
             query?: never;
@@ -734,6 +764,103 @@ export interface components {
             next_commitment: components["schemas"]["NextCommitmentResponse"] | null;
             /** Goals */
             goals: components["schemas"]["GoalSummaryResponse"][];
+        };
+        /**
+         * DayPlanFilters
+         * @description The Plan screen's controls, in one shape.
+         *
+         *     The same shape goes both ways: it is the state the screen is in when it
+         *     asks, and the state it should be in afterwards. ``lat``/``lng`` travel with
+         *     it because a ceiling means nothing without knowing where the list was
+         *     measured from — but they are only ever echoed back, never rewritten. See
+         *     ``DayPlanInterpretResponse``.
+         */
+        DayPlanFilters: {
+            /** Lat */
+            lat: number;
+            /** Lng */
+            lng: number;
+            /**
+             * Mode
+             * @default walk
+             * @enum {string}
+             */
+            mode: "walk" | "transit" | "ride";
+            /**
+             * Halal Only
+             * @default false
+             */
+            halal_only: boolean;
+            /** Cap Sen */
+            cap_sen?: number | null;
+            /**
+             * Sort
+             * @default balanced
+             * @enum {string}
+             */
+            sort: "balanced" | "cheapest" | "closest";
+        };
+        /**
+         * DayPlanInterpretRequest
+         * @description One sentence, and the controls it is to be read against.
+         *
+         *     The current state is sent with the sentence rather than assumed, because
+         *     most sentences only speak to one or two controls and the rest have to come
+         *     back untouched.
+         */
+        DayPlanInterpretRequest: {
+            /** Lat */
+            lat: number;
+            /** Lng */
+            lng: number;
+            /**
+             * Mode
+             * @default walk
+             * @enum {string}
+             */
+            mode: "walk" | "transit" | "ride";
+            /**
+             * Halal Only
+             * @default false
+             */
+            halal_only: boolean;
+            /** Cap Sen */
+            cap_sen?: number | null;
+            /**
+             * Sort
+             * @default balanced
+             * @enum {string}
+             */
+            sort: "balanced" | "cheapest" | "closest";
+            /** Text */
+            text: string;
+        };
+        /**
+         * DayPlanInterpretResponse
+         * @description What the sentence came to, and whether any of it may be applied.
+         *
+         *     ``filters`` is the whole new control state or it is null. There is no
+         *     partial answer: a client that applied half of a request would be showing a
+         *     list the user reads as the answer to all of it.
+         *
+         *     ``understood`` is the short line to show back, so a misreading is visible
+         *     and can be corrected by tapping the chip it got wrong. It is built from the
+         *     filters themselves, so it cannot describe a setting other than the one
+         *     being applied. ``unread`` is whatever part of the sentence produced no
+         *     filter — a place name, most often, since the origin is not the model's to
+         *     set. ``reason`` says why nothing was applied, and is empty when something
+         *     was.
+         */
+        DayPlanInterpretResponse: {
+            /** Applied */
+            applied: boolean;
+            filters: components["schemas"]["DayPlanFilters"] | null;
+            /** Understood */
+            understood: string;
+            /** Unread */
+            unread: string;
+            /** Reason */
+            reason: string;
         };
         /**
          * DayPlanResponse
@@ -1736,6 +1863,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DayPlanResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    interpret_filters_v1_day_plan_interpret_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DayPlanInterpretRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DayPlanInterpretResponse"];
                 };
             };
             /** @description Validation Error */

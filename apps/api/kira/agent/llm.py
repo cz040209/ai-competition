@@ -34,15 +34,25 @@ def _rm(sen: int | None) -> str:
 
 
 _AMOUNT = re.compile(
-    r"(?:rm|myr)\s?(\d{1,7}(?:[.,]\d{1,2})?)|(\d{1,7}(?:\.\d{1,2})?)\s*ringgit", re.I
+    r"(?:rm|myr)\s?(\d{1,7}(?:,\d{3})*(?:[.,]\d{1,2})?)"
+    r"|(\d{1,7}(?:,\d{3})*(?:\.\d{1,2})?)\s*ringgit",
+    re.I,
 )
+
+# A comma with three digits behind it is a thousands separator and belongs to
+# the whole part; a comma with one or two is the decimal point half the world
+# writes. Told apart by what follows rather than assumed, because this app
+# prints its own figures grouped -- ``Money.ringgit_str`` and the house style in
+# prompt.py both say RM1,234.56 -- so a user quoting a figure back at the Butler
+# is quoting one with a group separator in it.
+_GROUPING = re.compile(r",(?=\d{3})")
 
 
 def _amount_sen(text: str) -> int | None:
     match = _AMOUNT.search(text)
     if not match:
         return None
-    raw = (match.group(1) or match.group(2)).replace(",", ".")
+    raw = _GROUPING.sub("", match.group(1) or match.group(2)).replace(",", ".")
     whole, _, minor = raw.partition(".")
     return int(whole) * 100 + int((minor + "00")[:2] or 0)
 
@@ -88,6 +98,58 @@ def _afford_args(text: str, attachment: dict[str, Any] | None) -> dict[str, Any]
             label = candidate
             break
     return {"amount_sen": max(1, sen), "label": label}
+
+
+_HALAL = re.compile(r"\bhalal\b", re.I)
+
+
+def _places_args(text: str) -> dict[str, Any]:
+    """The parts of "somewhere halal under RM15" a regex can be trusted with.
+
+    Offline there is no model here to read a sentence, and the planner was
+    being called with no arguments at all — so a halal request came back as
+    everything nearby, which is the one filter where showing more than was
+    asked for is wrong rather than merely generous. The ceiling comes out of
+    the same ``_amount_sen`` the affordability route uses; a second parser
+    would be a second answer to what RM15 is worth.
+
+    An argument is only set when it was actually found. Anything unset falls to
+    the tool's own default, where a guess would be a constraint the user never
+    gave.
+    """
+    args: dict[str, Any] = {}
+    if _HALAL.search(text):
+        args["halal_only"] = True
+    cap_sen = _amount_sen(text)
+    # cap_sen is gt=0 on the tool, and "RM0" is not a ceiling anyone means.
+    if cap_sen:
+        args["cap_sen"] = cap_sen
+    return args
+
+
+def _places_unread(text: str) -> str:
+    """What the offline reading of a request for somewhere to eat left behind.
+
+    It cannot name the words it missed, because it never understood any of
+    them — so it says what it did read and states outright that the rest of the
+    sentence went unanswered. Answering as though the whole request had been
+    understood is the failure this exists to prevent: a list that quietly
+    dropped half of what was asked reads exactly like one that honoured all of
+    it.
+    """
+    read = _places_args(text)
+    kept = []
+    if read.get("halal_only"):
+        kept.append("halal only")
+    if read.get("cap_sen") is not None:
+        kept.append(f"a ceiling of {_rm(read['cap_sen'])}")
+    opening = "Offline I can only pick a price and the word halal out of a request"
+    if not kept:
+        return f"{opening}, and I found neither in what you asked, so nothing in it narrowed this."
+    return (
+        f"{opening}. Out of what you asked I read {' and '.join(kept)}, and nothing "
+        "else — any other condition in it went unread."
+    )
 
 
 def _compose_afford(messages: Sequence[BaseMessage], text: str) -> str:
@@ -243,27 +305,49 @@ def _stated(text: str) -> str:
 def _compose_places(messages: Sequence[BaseMessage], text: str) -> str:
     result = _payload(messages, "build_day_plan") or {}
     places = result.get("places") or []
+    # Said whatever came back, empty list included. What was read out of the
+    # request is the same either way, and it is the half of the answer the user
+    # cannot check for themselves.
+    unread = _places_unread(text)
+
+    # Now that a price in the request becomes the ceiling, the two figures come
+    # apart, and every sentence below that leans on one of them has to say which.
+    # "The only one that fits" against a ceiling the user named is a claim about
+    # their day that this list does not support.
+    cap_sen, room_sen = result.get("cap_sen"), result.get("room_sen")
+    own_cap = cap_sen != room_sen
 
     # An empty list has three different causes and the offline answer must not
     # blame the wrong one, exactly as the screen must not. The counts nest:
-    # nothing in range, nothing halal in range, nothing under today's room.
+    # nothing in range, nothing halal in range, nothing under the ceiling.
     if not places:
         if result.get("nearby_count") == 0:
-            return (
+            body = (
                 "Nothing I know of is within range of there. My set of places only "
                 "covers central KL, so that is a gap in what I have been given, not "
                 "a verdict on what is open."
             )
-        if result.get("matching_count") == 0:
-            return (
+        elif result.get("matching_count") == 0:
+            body = (
                 "There are places within range, but none I can confirm are halal, so "
                 "I have left them out. Say the word and I will show them anyway."
             )
-        return (
-            f"There are places nearby, but none under {_rm(result.get('cap_sen'))}. "
-            "That is what today has room for, not what the food is worth."
-        )
+        elif own_cap:
+            body = (
+                f"There are places nearby, but none under {_rm(cap_sen)}. That is the "
+                f"ceiling I read out of what you asked; today itself has room for "
+                f"{_rm(room_sen)}."
+            )
+        else:
+            body = (
+                f"There are places nearby, but none under {_rm(cap_sen)}. "
+                "That is what today has room for, not what the food is worth."
+            )
+        return f"{body}\n{unread}"
 
+    # Named, always, and only from what came back. "Five options between RM13
+    # and RM14" answers a question nobody asked: the user wants to know where
+    # to go, and the names are the one thing the list has that a range does not.
     best = places[0]
     head = (
         f"{best.get('name')} — {_rm(best.get('total_sen'))} for the whole outing, "
@@ -276,17 +360,27 @@ def _compose_places(messages: Sequence[BaseMessage], text: str) -> str:
     others = places[1:3]
     if others:
         listed = ", ".join(f"{p.get('name')} at {_rm(p.get('total_sen'))}" for p in others)
-        tail = f"After that: {listed}."
+        head += f" After that: {listed}."
+        # Counted rather than left implied, so three names do not read as the
+        # whole list when the search found more.
+        rest = len(places) - 1 - len(others)
+        if rest:
+            head += f" {rest} more came in under {_rm(cap_sen)} as well."
     else:
-        tail = "That is the only one that fits."
+        head += (
+            f" That is the only one under {_rm(cap_sen)}."
+            if own_cap
+            else " That is the only one that fits."
+        )
 
+    sub = "Every price is an estimate, never a quoted menu price."
     # Never let the prose imply a precision the distance did not have.
     if best.get("distance_basis") == "straight_line":
-        tail += (
+        sub += (
             " I could not reach the router, so those distances are straight lines "
             "and the real journey will be longer."
         )
-    return f"{head} {tail} Every price is an estimate, never a quoted menu price."
+    return f"{head}\n{sub} {unread}"
 
 
 ROUTES: tuple[Route, ...] = (
@@ -341,6 +435,7 @@ ROUTES: tuple[Route, ...] = (
             re.I,
         ),
         ("build_day_plan",),
+        arguments=lambda text, attachment: {"build_day_plan": _places_args(text)},
         compose=_compose_places,
     ),
     Route(

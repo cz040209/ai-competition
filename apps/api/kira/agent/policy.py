@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kira.db.models import Commitment, User
+from kira.services.day_plan import find_place
 
 # The safety net is the user's, not the Butler's. No tool exposes it, and any
 # argument that names it is refused rather than quietly ignored.
@@ -42,6 +43,21 @@ async def refusal_for(
             return (
                 f"“{commitment.name}” is protected. Protected bills stay exactly as they "
                 "are; I can work around them, not through them."
+            )
+
+    # A place id means nothing on its own: it is a handle on a row of a plan
+    # built from somewhere, so it is checked against that somewhere, and left
+    # alone by any call that names one without the other. The check belongs
+    # here rather than in the handler because here it runs twice — in the
+    # guard, so an id nobody was shown never reaches a card, and again on
+    # resume, so an edited card cannot swap in one that was never offered.
+    place_id = args.get("place_id")
+    lat, lng = args.get("lat"), args.get("lng")
+    if place_id is not None and isinstance(lat, int | float) and isinstance(lng, int | float):
+        if find_place(str(place_id), lat=float(lat), lng=float(lng)) is None:
+            return (
+                f"There is no place {place_id} within range of that search. I can only add "
+                "one the plan actually came back with — build it again and name one of those."
             )
     return None
 

@@ -1,9 +1,9 @@
-import { useContext, useEffect, useState } from "react";
+import { useContext, useEffect, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
 
-import type { Place } from "@kira/contracts";
+import type { DayPlanReading, Place } from "@kira/contracts";
 
-import { useAddPlanToToday, useDayPlan } from "../api/hooks";
+import { useAddPlanToToday, useDayPlan, useInterpretDayPlan } from "../api/hooks";
 import { IcCheck } from "../components/Icons";
 import { Odometer } from "../components/Odometer";
 import { Reveal } from "../components/Reveal";
@@ -133,6 +133,26 @@ const COPY_FAILURES: Record<CopyFailure, string> = {
   // focus by the time it ran.
   refused: "The browser turned down the copy.",
 };
+
+// Said when the request itself never landed. Every other way this can go wrong
+// arrives from the server with its own reason attached; this is the one where
+// there was nobody to ask, so the wording has to live here.
+const ASK_FAILED =
+  "I couldn't read that just now — the request didn't get through. Nothing below has changed.";
+
+/**
+ * The one line the ask box reads back, whether it was applied or not.
+ *
+ * `understood` is the server's, and the server builds it from the filters it is
+ * handing over, so the line and the chips below cannot come to disagree. What
+ * it could not place is appended rather than folded in: a sentence read in part
+ * is not a sentence refused, and the part that fell off is the part the user
+ * has to know about.
+ */
+function askLine(read: DayPlanReading): string {
+  const head = read.applied ? read.understood : read.reason;
+  return read.unread ? `${head} I couldn't place “${read.unread}”.` : head;
+}
 
 function Toast({ message }: { message: string }) {
   return (
@@ -355,8 +375,10 @@ export function DayPlan() {
   const [locState, setLocState] = useState<LocState>("idle");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [ask, setAsk] = useState("");
   const sheetHost = useContext(SheetHostContext);
   const addPlan = useAddPlanToToday();
+  const interpret = useInterpretDayPlan();
 
   const { data, isLoading, isError } = useDayPlan({
     lat: origin.lat,
@@ -396,10 +418,105 @@ export function DayPlan() {
     setLocState("idle");
   };
 
+  /**
+   * The sentence becomes the controls, and nothing else.
+   *
+   * Deliberately no answer of its own: the chips, the ceiling and the sort
+   * move, and the list re-ranks down the ordinary query path. That is what
+   * makes a misreading correctable — every part of the reading is a control
+   * sitting right below, and tapping it back is how you argue with it. A
+   * paragraph printed here instead would be a second account of the same list,
+   * with nothing to say which of the two the rows came from.
+   *
+   * The server sends the whole filter set or none of it, so this applies all of
+   * what came back or leaves everything alone. The origin is not among the
+   * fields it touches, whatever the response happens to carry: where the search
+   * is measured from belongs to the device and to the chip above.
+   */
+  const readAsk = (event: FormEvent) => {
+    event.preventDefault();
+    const sentence = ask.trim();
+    if (!sentence || interpret.isPending) return;
+    interpret.mutate(
+      {
+        text: sentence,
+        lat: origin.lat,
+        lng: origin.lng,
+        mode,
+        halal_only: halalOnly,
+        cap_sen: capSen ?? null,
+        sort,
+      },
+      {
+        onSuccess: (read) => {
+          if (!read.filters) return;
+          setMode(read.filters.mode);
+          setHalalOnly(read.filters.halal_only);
+          setCapSen(read.filters.cap_sen ?? undefined);
+          setSort(read.filters.sort);
+        },
+      },
+    );
+  };
+
+  /**
+   * Drop the reading once the user has answered it by hand.
+   *
+   * The whole claim made for this box is that a misreading is correctable by
+   * tapping the control it got wrong. Tapping it while "I read that as halal
+   * only" still sits above a Halal chip that now reads off leaves the
+   * correction and the claim contradicting each other on the same screen, with
+   * the line — which describes a sentence, not the controls — looking like the
+   * one that is current. Same rule as an edited sentence, for the same reason:
+   * the reading is cleared, never undone, so every chip it set stays set.
+   */
+  const clearReading = () => {
+    if (interpret.data || interpret.isError) interpret.reset();
+  };
+
+  const said = interpret.isError ? ASK_FAILED : interpret.data ? askLine(interpret.data) : null;
+
+  // Built above the early return and rendered in both branches. A sentence that
+  // changed the mode sends the list back to loading, and taking the box the
+  // user typed into off the screen along with it — sentence, reading and all —
+  // would hide the one record of what was just understood.
+  const askBox = (
+    <Reveal style={{ marginBottom: 14 }}>
+      <form className="askbar" onSubmit={readAsk}>
+        <input
+          value={ask}
+          placeholder="halal, under RM15, not far to walk"
+          aria-label="Say what you're after"
+          disabled={interpret.isPending}
+          onChange={(event) => {
+            setAsk(event.target.value);
+            // A reading of the last sentence, sitting under an edited one,
+            // reads as a reading of this one. The chips it already set stay
+            // set: the reading is cleared, not undone.
+            if (interpret.data || interpret.isError) interpret.reset();
+          }}
+        />
+        <button
+          type="submit"
+          className="btn btn-brass btn-sm"
+          disabled={interpret.isPending || ask.trim() === ""}
+        >
+          {interpret.isPending ? "Reading…" : "Set filters"}
+        </button>
+      </form>
+      {said && (
+        <p className="ask-said" role="status">
+          {said}
+        </p>
+      )}
+    </Reveal>
+  );
+
   // A wrong number is worse than no number, so neither state guesses.
   if (isLoading || !data) {
     return (
       <div className="pad" style={{ paddingTop: 90 }}>
+        {askBox}
         <p className="voice" style={{ fontSize: 17 }}>
           {isError ? "I couldn't find places just now." : "Finding what fits today…"}
         </p>
@@ -499,6 +616,8 @@ export function DayPlan() {
       </div>
 
       <div className="pad">
+        {askBox}
+
         <Reveal>
           <section className="capbar">
             <div className="cap-row">
@@ -525,7 +644,10 @@ export function DayPlan() {
               value={sliderValue}
               // The API takes a ceiling above zero, so dragging to the floor
               // asks for RM5 rather than for nothing at all.
-              onChange={(event) => setCapSen(Math.max(Number(event.target.value), MIN_CAP_SEN))}
+              onChange={(event) => {
+                clearReading();
+                setCapSen(Math.max(Number(event.target.value), MIN_CAP_SEN));
+              }}
               aria-label="Spending ceiling"
             />
             <div className="cap-ticks">
@@ -555,7 +677,10 @@ export function DayPlan() {
                 key={candidate.id}
                 type="button"
                 className={`fchip ${mode === candidate.id ? "on" : ""}`}
-                onClick={() => setMode(candidate.id)}
+                onClick={() => {
+                  clearReading();
+                  setMode(candidate.id);
+                }}
               >
                 {candidate.label}
               </button>
@@ -563,7 +688,10 @@ export function DayPlan() {
             <button
               type="button"
               className={`fchip ${halalOnly ? "on" : ""}`}
-              onClick={() => setHalalOnly((current) => !current)}
+              onClick={() => {
+                clearReading();
+                setHalalOnly((current) => !current);
+              }}
             >
               Halal
             </button>
@@ -627,7 +755,10 @@ export function DayPlan() {
                     role="radio"
                     aria-checked={sort === id}
                     className={`fchip ${sort === id ? "on" : ""}`}
-                    onClick={() => setSort(id)}
+                    onClick={() => {
+                      clearReading();
+                      setSort(id);
+                    }}
                   >
                     {SORTS[id].label}
                   </button>
@@ -750,7 +881,10 @@ export function DayPlan() {
                       type="button"
                       className="btn btn-line btn-sm"
                       style={{ marginTop: 12 }}
-                      onClick={() => setHalalOnly(false)}
+                      onClick={() => {
+                        clearReading();
+                        setHalalOnly(false);
+                      }}
                     >
                       Turn Halal off
                     </button>
