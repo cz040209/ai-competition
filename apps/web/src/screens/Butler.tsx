@@ -8,6 +8,7 @@ import { activityKey, butlerThreadKey, dashboardTodayKey, memoriesKey } from "..
 import { IcArrow, IcCam, IcImg, IcMic } from "../components/Icons";
 import { ScanSheet } from "../components/ScanSheet";
 import { VoiceSheet } from "../components/VoiceSheet";
+import { takeButlerHandoff } from "../lib/butlerHandoff";
 
 type Attachment = (Capture & { preview?: string }) | null;
 
@@ -142,6 +143,22 @@ export function Butler({ thread, isLoading }: ButlerProps) {
     ]);
     void consume(ask(trimmed, attached ?? undefined));
   };
+
+  /**
+   * A question handed over from another screen, asked as though it were typed
+   * here — because it was, a tab ago, and re-wording it would be answering a
+   * sentence the user never wrote.
+   *
+   * Held until the history has arrived: the effect above replaces the turns
+   * wholesale on first load, and a question sent before it would drop out of
+   * the conversation the moment the thread landed. The slot empties on the
+   * take, so the re-runs a strict-mode mount causes find nothing left.
+   */
+  useEffect(() => {
+    if (isLoading) return;
+    const handed = takeButlerHandoff();
+    if (handed) send(handed);
+  }, [isLoading]);
 
   const respond = (id: string, action: "accept" | "reject") => {
     if (live) return;

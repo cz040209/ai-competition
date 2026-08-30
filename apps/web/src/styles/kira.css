@@ -545,6 +545,13 @@ input.field:focus{outline:2px solid var(--brass);outline-offset:2px;}
 .place-rank{width:34px;height:34px;border-radius:12px;flex:none;display:grid;place-items:center;
   font-size:13px;font-weight:800;background:rgba(15,28,26,.055);color:var(--ink-3);}
 .place.sel .place-rank{background:var(--brass);color:#151009;}
+/* The near misses the ceiling turned away. Drawn as a row that did not make it
+   rather than as one that did: dashed, unshadowed, sitting back from the page
+   instead of on top of it. The badge says it in words and this says it before
+   the words are read. */
+.place.over-cap{background:rgba(154,74,59,.045);border:1.5px dashed rgba(154,74,59,.34);
+  box-shadow:none;}
+.place.over-cap.sel{border-style:solid;}
 .badge{font-size:9px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;padding:3px 7px;border-radius:6px;}
 .badge-best{background:rgba(169,133,63,.16);color:var(--brass);}
 .badge-over{background:rgba(154,74,59,.13);color:var(--clay);}

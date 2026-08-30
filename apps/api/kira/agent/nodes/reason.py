@@ -16,32 +16,38 @@ from kira.agent.state import ButlerContext, ButlerState
 from kira.agent.tools import REGISTRY
 
 
-def _model(runtime: Runtime[ButlerContext], attachment):
+def _model(runtime: Runtime[ButlerContext], attachment, history):
     factory = runtime.context.model_factory
     if factory is not None:
-        return factory(streaming=False, attachment=attachment)
-    return get_chat_model(streaming=False, attachment=attachment)
+        return factory(streaming=False, attachment=attachment, history=history)
+    return get_chat_model(streaming=False, attachment=attachment, history=history)
 
 
 async def agent(state: ButlerState, runtime: Runtime[ButlerContext]) -> dict:
     attachment = state.get("attachment")
+    # Handed to the model as well as pasted into the prompt. Online it is read
+    # there; offline it is what tells a bare "what about korean then" that the
+    # turn before it was about where to eat.
+    history = state.get("history_block", "")
     system = SystemMessage(
         prompt.system_prompt(
             context=state.get("context_block", ""),
             memory=state.get("memory_block", ""),
-            history=state.get("history_block", ""),
+            history=history,
             attachment=state.get("attachment_block", ""),
             tool_names=tuple(spec.name for spec in REGISTRY),
         )
     )
     conversation = [system, *state.get("messages", [])]
 
-    model = _model(runtime, attachment).bind_tools(REGISTRY.schemas())
+    model = _model(runtime, attachment, history).bind_tools(REGISTRY.schemas())
     try:
         reply = await model.ainvoke(conversation)
     except Exception as exc:  # the venue's network is not the user's problem
         events.emit(runtime, events.THINKING, text="Working from what is already here")
-        fallback = OfflineChatModel(attachment=attachment).bind_tools(REGISTRY.schemas())
+        fallback = OfflineChatModel(attachment=attachment, history=history).bind_tools(
+            REGISTRY.schemas()
+        )
         reply = await fallback.ainvoke(conversation)
         reply.response_metadata["kira_fallback"] = str(exc)
 

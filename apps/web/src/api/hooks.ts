@@ -51,6 +51,8 @@ export type DayPlanParams = {
   mode: "walk" | "transit" | "ride";
   halalOnly: boolean;
   capSen?: number;
+  /** One kind of food, or null for every kind. */
+  kind?: string | null;
 };
 
 type DayPlanKey = readonly ["day-plan", DayPlanParams];
@@ -58,13 +60,16 @@ type DayPlanKey = readonly ["day-plan", DayPlanParams];
 /** The ceiling only decides which of the same places are shown. Everything else
  *  in the search decides what the places are, how far away they are, and what
  *  they cost — so a previous answer may outlive a change of ceiling and nothing
- *  else. */
+ *  else. A kind of food is one of those others: the previous list is a list of
+ *  different shops, and holding it under a chip that now says Noodles would be
+ *  answering the new question with the old answer. */
 function sameSearch(before: DayPlanParams, now: DayPlanParams): boolean {
   return (
     before.lat === now.lat &&
     before.lng === now.lng &&
     before.mode === now.mode &&
-    before.halalOnly === now.halalOnly
+    before.halalOnly === now.halalOnly &&
+    (before.kind ?? null) === (now.kind ?? null)
   );
 }
 
@@ -75,6 +80,7 @@ export function useDayPlan(params: DayPlanParams) {
     mode: params.mode,
     halal_only: String(params.halalOnly),
     ...(params.capSen !== undefined ? { cap_sen: String(params.capSen) } : {}),
+    ...(params.kind ? { kind: params.kind } : {}),
   });
   return useQuery({
     queryKey: ["day-plan", params] as DayPlanKey,

@@ -11,6 +11,7 @@ import type {
 } from "@kira/contracts";
 
 import { api } from "../api/client";
+import { takeButlerHandoff } from "../lib/butlerHandoff";
 import { DayPlan } from "./DayPlan";
 
 vi.mock("../api/client", () => ({
@@ -156,9 +157,12 @@ const ABC_BISTRO: Place = {
 const TENSION: DayPlanData = {
   room_sen: ROOM_SEN,
   cap_sen: ROOM_SEN,
+  kind: null,
   nearby_count: 3,
   matching_count: 3,
+  kind_count: 3,
   places: [KENNY_HILLS, GERAI, ABC_BISTRO],
+  nearest_over_cap: [],
 };
 
 /** The same place with the router silent: ``km`` is the great circle, there is
@@ -171,9 +175,12 @@ function fellBack(place: Place, straightLineKm: number): Place {
 const RESPONSE: DayPlanData = {
   room_sen: ROOM_SEN,
   cap_sen: ROOM_SEN,
+  kind: null,
   nearby_count: PLACES.length,
   matching_count: PLACES.length,
+  kind_count: PLACES.length,
   places: PLACES,
+  nearest_over_cap: [],
 };
 
 /** What POST /v1/day-plan/drafts answers with: the draft the server made, with
@@ -207,6 +214,7 @@ function reading(over: Partial<DayPlanReading> = {}): DayPlanReading {
       mode: "ride",
       halal_only: false,
       cap_sen: 1500,
+      kind: null,
       sort: "closest",
     },
     understood: "I read that as halal off, under RM15.00, by Grab, closest first.",
@@ -221,9 +229,12 @@ function reading(over: Partial<DayPlanReading> = {}): DayPlanReading {
 const NOTHING_LEFT: DayPlanData = {
   room_sen: 0,
   cap_sen: 0,
+  kind: null,
   nearby_count: PLACES.length,
   matching_count: PLACES.length,
+  kind_count: PLACES.length,
   places: [],
+  nearest_over_cap: [],
 };
 
 function renderDayPlan() {
@@ -417,6 +428,63 @@ describe("DayPlan", () => {
     await user.click(screen.getByRole("button", { name: "Turn Halal off" }));
 
     await waitFor(() => expect(lastRequestedUrl()).toContain("halal_only=false"));
+  });
+
+  it("blames the kind of food rather than the ceiling when that is what emptied it", async () => {
+    // There is food in range and the ceiling is RM52.97: neither is the cause.
+    // A client told only "3 within range" would send the user at a slider that
+    // cannot reach a kind of food this part of town does not have.
+    vi.mocked(api.get).mockResolvedValue({
+      ...RESPONSE,
+      kind: "Noodles",
+      nearby_count: 3,
+      matching_count: 3,
+      kind_count: 0,
+      places: [],
+    });
+    renderDayPlan();
+
+    expect(
+      await screen.findByText(/None of the 3 places within range of here are noodles/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Raising the ceiling will not change that/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Nothing under RM52.97 yet/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/not halal/i)).not.toBeInTheDocument();
+  });
+
+  it("offers dropping the kind as the way out, and re-asks without it", async () => {
+    vi.mocked(api.get).mockResolvedValue({
+      ...RESPONSE,
+      kind: "Noodles",
+      nearby_count: 3,
+      matching_count: 3,
+      kind_count: 0,
+      places: [],
+    });
+    renderDayPlan();
+    await screen.findByText(/are noodles/i);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Show every kind" }));
+
+    await waitFor(() => expect(lastRequestedUrl()).not.toContain("kind="));
+  });
+
+  it("names the kind when it is the ceiling that emptied the list", async () => {
+    // "Nothing under RM52.97 yet" is false where the cheap places are simply
+    // not the food that was asked for.
+    vi.mocked(api.get).mockResolvedValue({
+      ...RESPONSE,
+      kind: "Japanese",
+      nearby_count: 3,
+      matching_count: 3,
+      kind_count: 1,
+      places: [],
+    });
+    renderDayPlan();
+
+    expect(await screen.findByText(/No japanese under RM52.97 yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/Raise the ceiling/i)).toBeInTheDocument();
   });
 
   it("keeps blaming the ceiling when the ceiling really is the cause", async () => {
@@ -1277,6 +1345,7 @@ describe("DayPlan · the ask box", () => {
       mode: "transit",
       halal_only: true,
       cap_sen: null,
+      kind: null,
       sort: "balanced",
     });
   });
@@ -1348,6 +1417,215 @@ describe("DayPlan · the ask box", () => {
 
     expect(screen.getByRole("button", { name: "Set filters" })).toBeDisabled();
     expect(api.post).not.toHaveBeenCalled();
+  });
+
+  it("sets the kind of food, and shows it as a chip that can be taken off", async () => {
+    // The one control with no permanent chip of its own: twenty-two kinds is a
+    // wall nobody reads, so the chip appears when the filter is on. Without it
+    // the ask box could narrow the list to something the user can see only in
+    // what is missing from it.
+    answering(
+      reading({
+        filters: {
+          lat: 3.1577,
+          lng: 101.712,
+          mode: "walk",
+          halal_only: true,
+          cap_sen: null,
+          kind: "Noodles",
+          sort: "balanced",
+        },
+        understood: "I read that as noodles.",
+      }),
+    );
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+
+    const user = await askFor("I want noodles");
+
+    await waitFor(() => expect(lastRequestedUrl()).toContain("kind=Noodles"));
+    const chip = screen.getByRole("button", { name: "Clear the Noodles filter" });
+    expect(chip).toHaveClass("on");
+
+    await user.click(chip);
+
+    await waitFor(() => expect(lastRequestedUrl()).not.toContain("kind="));
+    expect(
+      screen.queryByRole("button", { name: "Clear the Noodles filter" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("leaves the kind alone when the reading carries none", async () => {
+    answering(reading());
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+
+    await askFor("cheapest ride under RM15, halal off");
+
+    await waitFor(() => expect(lastRequestedUrl()).toContain("cap_sen=1500"));
+    expect(lastRequestedUrl()).not.toContain("kind=");
+  });
+});
+
+describe("DayPlan · the part the filters cannot hold", () => {
+  function answering(answer: DayPlanReading) {
+    vi.mocked(api.post).mockImplementation((path: string) =>
+      String(path).endsWith("/interpret") ? Promise.resolve(answer) : Promise.resolve(PLAN_DRAFT),
+    );
+  }
+
+  async function askFor(sentence: string) {
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText("Say what you're after"), sentence);
+    await user.click(screen.getByRole("button", { name: "Set filters" }));
+    return user;
+  }
+
+  beforeEach(() => {
+    // A sentence left in the slot by one case would be asked by the next
+    // Butler to open, which in this file is nobody and in the app is the user.
+    takeButlerHandoff();
+  });
+
+  it("offers the Butler the sentence when part of it produced no filter", async () => {
+    answering(
+      reading({
+        understood: "I read that as under RM15.00.",
+        unread: "what's actually good tonight",
+      }),
+    );
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+
+    await askFor("under RM15, and what's actually good tonight");
+
+    expect(
+      await screen.findByRole("button", { name: "Ask Kira about this" }),
+    ).toBeInTheDocument();
+  });
+
+  it("offers it for a sentence the filters could do nothing with at all", async () => {
+    // Nothing applied and nothing to apply: the chips have no answer to this
+    // one, which is exactly when the conversation is the whole of the answer.
+    answering(
+      reading({
+        applied: false,
+        filters: null,
+        understood: "",
+        unread: "what should I actually eat tonight",
+        reason: "There is nothing in that I can set on this screen. Nothing below has changed.",
+      }),
+    );
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+
+    await askFor("what should I actually eat tonight");
+
+    expect(
+      await screen.findByRole("button", { name: "Ask Kira about this" }),
+    ).toBeInTheDocument();
+  });
+
+  it("does not offer it for a sentence the filters read whole", async () => {
+    // Every word of this became a chip, so there is nothing left to take
+    // anywhere. An offer standing here anyway would be inviting the user out
+    // of a screen that has already answered them.
+    answering(reading());
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+
+    await askFor("cheapest ride under RM15, halal off");
+
+    await screen.findByText(/I read that as halal off/);
+    expect(
+      screen.queryByRole("button", { name: "Ask Kira about this" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("hands over the sentence as it was written, not the fragment it could not place", async () => {
+    // "under RM15" is the half that makes "what's actually good tonight"
+    // answerable, so the Butler is given the whole sentence.
+    answering(
+      reading({
+        understood: "I read that as under RM15.00.",
+        unread: "what's actually good tonight",
+      }),
+    );
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+    const user = await askFor("under RM15, and what's actually good tonight");
+
+    await user.click(await screen.findByRole("button", { name: "Ask Kira about this" }));
+
+    expect(takeButlerHandoff()).toBe("under RM15, and what's actually good tonight");
+  });
+
+  it("says where the question went, since tapping cannot move the user there", async () => {
+    answering(
+      reading({
+        understood: "I read that as under RM15.00.",
+        unread: "what's actually good tonight",
+      }),
+    );
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+    const user = await askFor("under RM15, and what's actually good tonight");
+
+    await user.click(await screen.findByRole("button", { name: "Ask Kira about this" }));
+
+    expect(await screen.findByText(/waiting in the Butler/i)).toBeInTheDocument();
+    expect(screen.getByText(/Open the Butler tab below/i)).toBeInTheDocument();
+    // The offer does not stand a second time for the same sentence.
+    expect(
+      screen.queryByRole("button", { name: "Ask Kira about this" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("answers nothing itself, and moves no control, when the question is handed over", async () => {
+    // The chips and the rows stay the single account of what is being shown.
+    // A reply appearing here would be a second one, with nothing on the page
+    // to say which of them the list below came from.
+    answering(
+      reading({
+        understood: "I read that as under RM15.00.",
+        unread: "what's actually good tonight",
+      }),
+    );
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+    const user = await askFor("under RM15, and what's actually good tonight");
+    await waitFor(() => expect(lastRequestedUrl()).toContain("cap_sen=1500"));
+    const asked = vi.mocked(api.get).mock.calls.length;
+    const posted = vi.mocked(api.post).mock.calls.length;
+
+    await user.click(await screen.findByRole("button", { name: "Ask Kira about this" }));
+
+    expect(vi.mocked(api.get).mock.calls.length).toBe(asked);
+    expect(vi.mocked(api.post).mock.calls.length).toBe(posted);
+    expect(screen.getByText("Nasi Kandar Pelita")).toBeInTheDocument();
+    expect(screen.getByText(/I read that as under RM15.00/)).toBeInTheDocument();
+  });
+
+  it("drops the offer when the sentence is edited, and takes the waiting question with it", async () => {
+    // The offer belongs to the sentence that was read. Left standing under a
+    // half-typed new one, it would hand over words the user has moved on from.
+    answering(
+      reading({
+        understood: "I read that as under RM15.00.",
+        unread: "what's actually good tonight",
+      }),
+    );
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+    const user = await askFor("under RM15, and what's actually good tonight");
+    await screen.findByRole("button", { name: "Ask Kira about this" });
+
+    await user.type(screen.getByLabelText("Say what you're after"), " near work");
+
+    expect(
+      screen.queryByRole("button", { name: "Ask Kira about this" }),
+    ).not.toBeInTheDocument();
+    expect(takeButlerHandoff()).toBeNull();
   });
 });
 
@@ -1451,5 +1729,179 @@ describe("DayPlan · the reading and the controls cannot contradict each other",
     expect(
       (screen.getByLabelText("Spending ceiling") as HTMLInputElement).value,
     ).toBe("1500");
+  });
+});
+
+describe("DayPlan · the nearest places above the ceiling", () => {
+  /** Two places over a RM10 ceiling, which is the case the whole group is for:
+   *  a ceiling below everything nearby. Both sit inside today's room, so the
+   *  band is not something the room would have produced on its own. */
+  const OVER_ONE: Place = {
+    ...PELITA,
+    id: "o1",
+    name: "Mee Sepuluh",
+    total_sen: 1150,
+    share: 1150 / ROOM_SEN,
+    band: "over",
+  };
+  const OVER_TWO: Place = {
+    ...GERAI,
+    id: "o2",
+    name: "Warung Dua Belas",
+    total_sen: 1250,
+    share: 1250 / ROOM_SEN,
+    band: "over",
+  };
+
+  const NOTHING_FITS: DayPlanData = {
+    ...RESPONSE,
+    cap_sen: 1000,
+    places: [],
+    nearest_over_cap: [OVER_ONE, OVER_TWO],
+  };
+
+  it("offers the nearest places instead of an empty list", async () => {
+    vi.mocked(api.get).mockResolvedValue(NOTHING_FITS);
+    renderDayPlan();
+
+    // The ceiling is still stated as respected, which is the whole bargain.
+    expect(await screen.findByText(/Nothing under RM10.00 yet/i)).toBeInTheDocument();
+    expect(screen.getByText("Mee Sepuluh")).toBeInTheDocument();
+    expect(screen.getByText("Warung Dua Belas")).toBeInTheDocument();
+  });
+
+  it("names the group as over the ceiling rather than letting it read as the list", async () => {
+    vi.mocked(api.get).mockResolvedValue(NOTHING_FITS);
+    renderDayPlan();
+
+    expect(await screen.findByText(/Over your ceiling/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Nothing fitted RM10.00, so here are the 2 places closest above it/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/They are not in the list because they do not fit/i),
+    ).toBeInTheDocument();
+  });
+
+  it("says how far over the closest one is, rather than leaving an absence", async () => {
+    vi.mocked(api.get).mockResolvedValue(NOTHING_FITS);
+    renderDayPlan();
+
+    // RM11.50 against a RM10 ceiling: the shortfall is the figure that makes
+    // "nothing fits" into something the user can act on.
+    expect(await screen.findByText(/The closest is RM11.50 — RM1.50 over/i)).toBeInTheDocument();
+  });
+
+  it("marks every one of them over on the row itself", async () => {
+    vi.mocked(api.get).mockResolvedValue(NOTHING_FITS);
+    renderDayPlan();
+    await screen.findByText("Mee Sepuluh");
+
+    // Not "Over", which is the room's word: these are over the ceiling, and
+    // the ceiling here is well below the room.
+    expect(screen.getAllByText("Over ceiling")).toHaveLength(2);
+    expect(screen.queryByText("Best fit")).not.toBeInTheDocument();
+  });
+
+  it("draws them as a group the list above did not admit", async () => {
+    vi.mocked(api.get).mockResolvedValue(NOTHING_FITS);
+    renderDayPlan();
+    await screen.findByText("Mee Sepuluh");
+
+    const rows = Array.from(document.querySelectorAll<HTMLElement>(".place"));
+    expect(rows).toHaveLength(2);
+    // Every row on screen carries the marker, because every row on screen is
+    // one the ceiling turned away.
+    expect(rows.every((row) => row.classList.contains("over-cap"))).toBe(true);
+  });
+
+  it("shows no group at all when the ceiling admitted something", async () => {
+    // The trigger is a completely empty list and never a thin one, so a list
+    // with somewhere to eat in it is not topped up from above the ceiling.
+    vi.mocked(api.get).mockResolvedValue(RESPONSE);
+    renderDayPlan();
+    await screen.findByText("Nasi Kandar Pelita");
+
+    expect(screen.queryByText(/Over your ceiling/i)).not.toBeInTheDocument();
+    expect(screen.queryByText("Over ceiling")).not.toBeInTheDocument();
+    expect(document.querySelectorAll(".place.over-cap")).toHaveLength(0);
+  });
+
+  it("says nothing about a ceiling when distance is what emptied the list", async () => {
+    vi.mocked(api.get).mockResolvedValue({
+      ...RESPONSE,
+      nearby_count: 0,
+      matching_count: 0,
+      kind_count: 0,
+      places: [],
+      nearest_over_cap: [],
+    });
+    renderDayPlan();
+
+    expect(await screen.findByText(/Nothing within range of here/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Over your ceiling/i)).not.toBeInTheDocument();
+  });
+
+  it("still says the group is halal when the halal filter is on", async () => {
+    // The ceiling is the only thing relaxed. Saying so is what keeps the offer
+    // from reading as a filter quietly dropped.
+    vi.mocked(api.get).mockResolvedValue(NOTHING_FITS);
+    renderDayPlan();
+
+    expect(await screen.findByText(/still halal/i)).toBeInTheDocument();
+  });
+
+  it("names every filter the group still honours, kind included", async () => {
+    vi.mocked(api.get).mockResolvedValue({ ...NOTHING_FITS, kind: "Japanese", kind_count: 2 });
+    renderDayPlan();
+
+    expect(await screen.findByText(/still japanese and halal/i)).toBeInTheDocument();
+  });
+
+  it("says it in the singular when the ceiling turned away one place", async () => {
+    vi.mocked(api.get).mockResolvedValue({ ...NOTHING_FITS, nearest_over_cap: [OVER_ONE] });
+    renderDayPlan();
+
+    expect(
+      await screen.findByText(/here is the one place closest above it/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/It is not in the list because it does not fit/i),
+    ).toBeInTheDocument();
+  });
+
+  it("opens one of them, and talks about the ceiling rather than a negative room", async () => {
+    vi.mocked(api.get).mockResolvedValue(NOTHING_FITS);
+    renderDayPlan();
+    await screen.findByText("Mee Sepuluh");
+
+    const { sheet } = await openSheet("Mee Sepuluh");
+
+    // total − room here is −RM41.47. "RM-41.47 over today's room" is exactly
+    // the figure this app may never print.
+    expect(
+      within(sheet).getByText(/RM1.50 over the RM10.00 ceiling/i),
+    ).toBeInTheDocument();
+    expect(within(sheet).getByText(/Today's room would still cover it/i)).toBeInTheDocument();
+    expect(within(sheet).queryByText(/over today's room/i)).not.toBeInTheDocument();
+  });
+
+  it("adds one to today at the price the row showed", async () => {
+    // It did not fit the ceiling, and it is still a real outing at a real
+    // price — the draft is the row's own figure, like every other.
+    vi.mocked(api.get).mockResolvedValue(NOTHING_FITS);
+    renderDayPlan();
+    await screen.findByText("Mee Sepuluh");
+
+    const { user, sheet } = await openSheet("Mee Sepuluh");
+    await user.click(within(sheet).getByRole("button", { name: "Add to today" }));
+
+    await waitFor(() =>
+      expect(api.post).toHaveBeenCalledWith("/v1/day-plan/drafts", {
+        name: "Mee Sepuluh",
+        total_sen: 1150,
+        confidence: "high",
+      }),
+    );
   });
 });

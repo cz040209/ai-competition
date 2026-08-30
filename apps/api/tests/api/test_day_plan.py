@@ -147,6 +147,76 @@ class TestDayPlanPlaces:
             assert isinstance(place["minutes"], int)
 
 
+class TestFilteringByKindOfFood:
+    """The screen's ask box can say "noodles" now, so the wire has to carry it
+    — and has to echo back which kind the list it is answering with was
+    actually built from, exactly as it echoes the ceiling."""
+
+    async def test_it_returns_only_that_kind_and_says_which(
+        self, client, session, place_world
+    ):
+        token = await demo_token(client, session)
+        response = await client.get(
+            "/v1/day-plan/places",
+            params={**place_world.origin, "cap_sen": 100_000, "kind": "Cafe"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert [p["name"] for p in body["places"]] == [
+            place_world.cheap.name,
+            place_world.second_cafe.name,
+        ]
+        assert body["kind"] == "Cafe"
+        assert body["kind_count"] == 2
+
+    async def test_a_lowercase_or_plural_spelling_still_finds_it(
+        self, client, session, place_world
+    ):
+        token = await demo_token(client, session)
+        response = await client.get(
+            "/v1/day-plan/places",
+            params={**place_world.origin, "cap_sen": 100_000, "kind": "noodle"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert [p["name"] for p in response.json()["places"]] == [place_world.noodles.name]
+
+    async def test_asking_for_nothing_in_particular_leaves_the_list_whole(
+        self, client, session, place_world
+    ):
+        token = await demo_token(client, session)
+        response = await client.get(
+            "/v1/day-plan/places",
+            params={**place_world.origin, "cap_sen": 100_000},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        body = response.json()
+        assert body["kind"] is None
+        assert body["kind_count"] == body["matching_count"] == len(body["places"])
+
+    async def test_a_kind_that_is_not_here_is_told_apart_from_a_ceiling(
+        self, client, session, place_world
+    ):
+        token = await demo_token(client, session)
+        headers = {"Authorization": f"Bearer {token}"}
+        params = {**place_world.origin, "cap_sen": 100_000}
+
+        no_such_food = await client.get(
+            "/v1/day-plan/places", params={**params, "kind": "Korean"}, headers=headers
+        )
+        by_ceiling = await client.get(
+            "/v1/day-plan/places", params={**place_world.origin, "cap_sen": 1}, headers=headers
+        )
+
+        assert no_such_food.json()["places"] == by_ceiling.json()["places"] == []
+        # Two identical empty lists, and the counts are the only thing that
+        # tells a slider the user can drag from a kind of food that is not in
+        # this part of town.
+        assert no_such_food.json()["kind_count"] == 0
+        assert no_such_food.json()["matching_count"] == 7
+        assert by_ceiling.json()["kind_count"] == by_ceiling.json()["matching_count"] == 7
+
+
 class TestWhatTheDistanceWasMeasuredOn:
     """The screen has to be able to say whether a fare is a road fare.
 
@@ -338,6 +408,96 @@ class TestWhyTheListIsEmpty:
         # Nothing was filtered out for not being halal, so the ceiling is the
         # cause and is the one thing the copy may point the user at.
         assert body["matching_count"] == body["nearby_count"]
+
+
+class TestTheNearestPlacesAboveTheCeiling:
+    """A ceiling below everything comes back with somewhere to eat anyway.
+
+    In its own field, never in ``places``: a client must not be able to render
+    these as though they had fitted, and the wire shape is the first thing that
+    has to make that impossible.
+    """
+
+    async def test_a_ceiling_below_everything_returns_the_nearest_group(
+        self, client, session, place_world
+    ):
+        token = await demo_token(client, session)
+        response = await client.get(
+            "/v1/day-plan/places",
+            params={**place_world.origin, "cap_sen": 500},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["places"] == []
+        assert [p["name"] for p in body["nearest_over_cap"]] == [
+            place_world.cheap.name,
+            place_world.mid.name,
+            place_world.near_non_halal.name,
+        ]
+        # Named as over on the row itself, not only by the field they arrived
+        # in, so a client that draws them has the distinction in its hand.
+        assert all(p["band"] == "over" for p in body["nearest_over_cap"])
+        assert all(p["total_sen"] > body["cap_sen"] for p in body["nearest_over_cap"])
+
+    async def test_a_ceiling_that_admits_some_places_carries_no_group(
+        self, client, session, place_world
+    ):
+        token = await demo_token(client, session)
+        response = await client.get(
+            "/v1/day-plan/places",
+            params={**place_world.origin, "cap_sen": 1000},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        body = response.json()
+        assert [p["name"] for p in body["places"]] == [place_world.cheap.name]
+        assert body["nearest_over_cap"] == []
+
+    async def test_the_field_is_always_there_even_when_it_is_empty(
+        self, client, session, place_world
+    ):
+        # A field a client may find missing is a field a client will forget to
+        # read, and this is the one list it must never quietly omit.
+        token = await demo_token(client, session)
+        response = await client.get(
+            "/v1/day-plan/places",
+            params={**place_world.origin, "cap_sen": 100_000},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        body = response.json()
+        assert body["places"] != []
+        assert body["nearest_over_cap"] == []
+
+    async def test_an_empty_list_no_ceiling_caused_offers_nothing(
+        self, client, session, place_world
+    ):
+        token = await demo_token(client, session)
+        headers = {"Authorization": f"Bearer {token}"}
+        out_of_range = await client.get(
+            "/v1/day-plan/places",
+            params={**place_world.out_of_range, "cap_sen": 100_000},
+            headers=headers,
+        )
+        no_halal = await client.get(
+            "/v1/day-plan/places",
+            params={**place_world.lone_non_halal, "cap_sen": 100_000, "halal_only": True},
+            headers=headers,
+        )
+        for response in (out_of_range, no_halal):
+            body = response.json()
+            assert body["places"] == []
+            assert body["nearest_over_cap"] == []
+
+    async def test_the_group_still_honours_halal(self, client, session, place_world):
+        token = await demo_token(client, session)
+        response = await client.get(
+            "/v1/day-plan/places",
+            params={**place_world.origin, "cap_sen": 500, "halal_only": True},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        body = response.json()
+        assert body["places"] == []
+        assert all(p["halal"] for p in body["nearest_over_cap"])
 
 
 class TestDayOnWhichNothingIsLeft:

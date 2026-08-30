@@ -34,8 +34,15 @@ async def get_places(
     halal_only: bool = False,
     cap_sen: int | None = Query(default=None, gt=0),
     radius_km: float = Query(default=5.0, gt=0),
+    kind: str | None = Query(default=None, max_length=40),
 ):
-    """The cap only filters the list; the room is what every band is judged on."""
+    """The cap only filters the list; the room is what every band is judged on.
+
+    ``kind`` narrows to one sort of food and is echoed back beside the counts,
+    because the client cannot read its own state against a list that is still
+    in flight: the answer on screen has to say which kind it was actually
+    filtered by, exactly as it says which ceiling.
+    """
     dashboard = await today_dashboard(session, user, today_for())
     room_sen = dashboard.safe_today_sen
     cap = cap_sen if cap_sen is not None else room_sen
@@ -47,13 +54,21 @@ async def get_places(
         cap_sen=cap,
         room_sen=room_sen,
         radius_km=radius_km,
+        kind=kind,
     )
     return {
         "room_sen": room_sen,
         "cap_sen": cap,
+        "kind": kind,
         "nearby_count": found.nearby_count,
         "matching_count": found.matching_count,
+        "kind_count": found.kind_count,
         "places": found.places,
+        # Handed over in its own field and never appended to ``places``. It is
+        # only ever non-empty when the ceiling admitted nothing at all, and a
+        # client that draws it has to say what it is: these cost more than the
+        # ceiling it was asked for.
+        "nearest_over_cap": found.nearest_over_cap,
     }
 
 
@@ -77,6 +92,7 @@ async def interpret_filters(body: DayPlanInterpretRequest, user: CurrentUser) ->
         mode=body.mode,
         halal_only=body.halal_only,
         cap_sen=body.cap_sen,
+        kind=body.kind,
         sort=body.sort,
     )
     read = await plan_intent.interpret(body.text, current, currency=user.currency)

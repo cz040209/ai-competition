@@ -21,7 +21,14 @@ KLCC = {"lat": 3.1577, "lng": 101.712}
 
 # The state the screen opens in: on foot, halal on, no ceiling of the user's
 # own, balanced order. Every "unchanged" assertion below is against this.
-UNTOUCHED = {**KLCC, "mode": "walk", "halal_only": True, "cap_sen": None, "sort": "balanced"}
+UNTOUCHED = {
+    **KLCC,
+    "mode": "walk",
+    "halal_only": True,
+    "cap_sen": None,
+    "kind": None,
+    "sort": "balanced",
+}
 
 
 class StubModel:
@@ -96,6 +103,7 @@ class TestReadingASentence:
             "mode": "walk",
             "halal_only": True,
             "cap_sen": 1500,
+            "kind": None,
             "sort": "closest",
         }
         # The Butler's own plan schema, not a second one written for this
@@ -139,6 +147,7 @@ class TestReadingASentence:
             "mode": "transit",
             "halal_only": False,
             "cap_sen": 1500,
+            "kind": None,
             "sort": "closest",
         }
         assert body["understood"] == "I read that as under RM15.00."
@@ -197,6 +206,107 @@ class TestWhatItCouldNotRead:
         response = await ask(client, token, "halal only please", halal_only=False)
 
         assert response.json()["unread"] == ""
+
+
+class TestReadingAKindOfFood:
+    """The one control with a closed vocabulary that is not the model's.
+
+    Asked for somewhere "hawker", a live model fills the field confidently with
+    a word no place carries. Applying it would empty the list behind a chip the
+    user cannot argue with — a screen showing nothing on the strength of a
+    category that does not exist.
+    """
+
+    async def test_a_kind_the_places_carry_is_applied(self, client, session, reading):
+        token = await demo_token(client, session)
+        reading(PlanIntent(kind="Noodles"))
+
+        response = await ask(client, token, "I want noodles")
+
+        body = response.json()
+        assert body["applied"] is True
+        assert body["filters"]["kind"] == "Noodles"
+        assert body["understood"] == "I read that as noodles."
+
+    async def test_it_comes_back_in_the_spelling_the_places_use(self, client, session, reading):
+        # So the chip on screen reads like the rows below it, and so the filter
+        # the screen sends back matches on the first try.
+        token = await demo_token(client, session)
+        reading(PlanIntent(kind="japanese"))
+
+        response = await ask(client, token, "somewhere japanese")
+
+        assert response.json()["filters"]["kind"] == "Japanese"
+
+    async def test_a_category_the_data_does_not_have_sets_no_filter(
+        self, client, session, reading
+    ):
+        token = await demo_token(client, session)
+        reading(PlanIntent(kind="hawker"))
+
+        response = await ask(client, token, "somewhere hawker")
+
+        body = response.json()
+        # Nothing applied, and the word handed back as one it could not place —
+        # which is what the box already does with the rest of a sentence.
+        assert body["applied"] is False
+        assert body["unread"] == "hawker"
+        assert body["reason"] == plan_intent.NOTHING_TO_SET
+
+    async def test_an_unreadable_kind_does_not_take_the_rest_of_the_sentence_with_it(
+        self, client, session, reading
+    ):
+        token = await demo_token(client, session)
+        reading(PlanIntent(halal_only=True, cap_sen=1500, kind="street food"))
+
+        response = await ask(
+            client, token, "halal street food under RM15", halal_only=False
+        )
+
+        body = response.json()
+        assert body["applied"] is True
+        assert body["filters"]["kind"] is None
+        assert body["understood"] == "I read that as halal only, under RM15.00."
+        assert body["unread"] == "street food"
+
+    async def test_both_kinds_of_unread_are_kept(self, client, session, reading):
+        token = await demo_token(client, session)
+        reading(PlanIntent(halal_only=True, kind="hawker", unread="near Bangsar"))
+
+        response = await ask(client, token, "halal hawker near Bangsar", halal_only=False)
+
+        # A place to search near and a category nothing here serves are two
+        # different things the box could not use, and dropping either would be
+        # the screen going quiet about half of what it missed.
+        assert response.json()["unread"] == "near Bangsar, hawker"
+
+    async def test_clearing_it_is_a_reading_too(self, client, session, reading):
+        token = await demo_token(client, session)
+        reading(PlanIntent(kind=None))
+
+        response = await ask(client, token, "anything, not just noodles", kind="Noodles")
+
+        body = response.json()
+        assert body["filters"]["kind"] is None
+        assert body["understood"] == "I read that as any kind of food."
+
+    async def test_a_sentence_that_says_nothing_about_food_leaves_it_alone(
+        self, client, session, reading
+    ):
+        token = await demo_token(client, session)
+        reading(PlanIntent(cap_sen=1500))
+
+        response = await ask(client, token, "nothing over RM15", kind="Mamak")
+
+        assert response.json()["filters"]["kind"] == "Mamak"
+
+    async def test_the_model_is_told_which_kind_is_set(self, client, session, reading):
+        token = await demo_token(client, session)
+        model = reading(PlanIntent(cap_sen=1500))
+
+        await ask(client, token, "nothing over RM15", kind="Mamak")
+
+        assert "Mamak" in model.conversations[0][0].content
 
 
 class TestTheOriginIsNotTheModelsToSet:

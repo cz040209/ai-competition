@@ -8,6 +8,7 @@ import { IcCheck } from "../components/Icons";
 import { Odometer } from "../components/Odometer";
 import { Reveal } from "../components/Reveal";
 import { Sheet, SheetHostContext } from "../components/Sheet";
+import { handToButler } from "../lib/butlerHandoff";
 import { fmt } from "../lib/money";
 import {
   bestFitId,
@@ -165,10 +166,83 @@ function Toast({ message }: { message: string }) {
   );
 }
 
+type PlaceRowProps = {
+  place: Place;
+  /** Its position in the group it belongs to, one-based. */
+  rank: number;
+  selected: boolean;
+  badge: "best" | "over-cap" | null;
+  nameTheBasis: boolean;
+  onSelect: () => void;
+};
+
+/**
+ * One tappable row, in the list or in the group of near misses above it.
+ *
+ * The two groups share this because the figures are the same figures and a
+ * second set of markup for them would be a second place for the two to drift.
+ * What tells them apart is on the row and not only above it: `badge-over` is
+ * on every near miss, and `over-cap` tints the row itself. A row that read
+ * identically to one that fitted is the whole thing this must not do.
+ */
+function PlaceRow({ place, rank, selected, badge, nameTheBasis, onSelect }: PlaceRowProps) {
+  return (
+    <button
+      type="button"
+      className={`place ${selected ? "sel" : ""} ${badge === "over-cap" ? "over-cap" : ""}`}
+      onClick={onSelect}
+    >
+      <span className="place-rank">{rank}</span>
+      <span style={{ flex: 1, minWidth: 0 }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 7 }}>
+          <b style={{ fontSize: 15, letterSpacing: "-.02em" }}>{place.name}</b>
+          {badge === "best" && <span className="badge badge-best">Best fit</span>}
+          {/* Said in full on a near miss. "Over" alone is the room's word, and
+              these are over the ceiling — which may not be the same thing. */}
+          {badge === "over-cap"
+            ? <span className="badge badge-over">Over ceiling</span>
+            : place.band === "over" && <span className="badge badge-over">Over</span>}
+        </span>
+        <span style={{ display: "block", fontSize: 12, color: "var(--muted)", marginTop: 3 }}>
+          {place.kind} · {distanceText(place, nameTheBasis)} · {place.minutes} min
+        </span>
+        <span
+          style={{
+            display: "block",
+            fontSize: 12,
+            marginTop: 3,
+            color:
+              place.band === "over"
+                ? "var(--clay)"
+                : place.band === "tight"
+                  ? "var(--brass)"
+                  : "var(--muted)",
+          }}
+        >
+          {place.share !== null
+            ? `${Math.round(place.share * 100)}% of today's room`
+            : "Nothing left in today's room"}
+          {place.travel_sen > 0 && ` · incl. RM${fmt(place.travel_sen)} travel`}
+        </span>
+      </span>
+      <span style={{ textAlign: "right", flex: "none" }}>
+        <span className="money" style={{ fontSize: 18, display: "block" }}>
+          RM{fmt(place.total_sen)}
+        </span>
+        <span className="tag" style={{ color: "var(--brass)" }}>Est · {place.confidence}</span>
+      </span>
+    </button>
+  );
+}
+
 type DetailSheetProps = {
   place: Place;
   modeLabel: string;
   roomSen: number;
+  /** The ceiling this list was built against, as the server reported it. */
+  capSen: number;
+  /** Whether this place came back in `nearest_over_cap` rather than in the list. */
+  overCap: boolean;
   adding: boolean;
   addFailed: boolean;
   onClose: () => void;
@@ -180,6 +254,8 @@ function DetailSheet({
   place,
   modeLabel,
   roomSen,
+  capSen,
+  overCap,
   adding,
   addFailed,
   onClose,
@@ -251,10 +327,23 @@ function DetailSheet({
           "Comfortable. This leaves most of today's room for whatever else comes up."}
         {place.band === "tight" && place.share !== null &&
           `This works, but it uses ${Math.round(place.share * 100)}% of today's room. The rest of today would need to stay light.`}
+        {/* Three different sentences, because "over" means two different
+            things here and the wrong one prints a figure that is not true. A
+            place from the over-the-ceiling group is over the ceiling by
+            definition and may still sit well inside today's room — where the
+            ceiling is one the user dragged there, `total − room` is negative
+            and "RM-38.50 over today's room" is exactly the invented figure this
+            app must never state. Where the ceiling is today's room, the two
+            readings are the same figure and the room wording is the plainer. */}
         {place.band === "over" &&
-          (roomSen > 0
-            ? `This is RM${fmt(overSen)} over today's room. I'd have to propose a recovery scenario, and you'd have to approve it.`
-            : "Today's room is already spent, so all of this would be borrowed from the days ahead.")}
+          (roomSen === 0
+            ? "Today's room is already spent, so all of this would be borrowed from the days ahead."
+            : overCap && capSen !== roomSen
+              ? `This is RM${fmt(place.total_sen - capSen)} over the RM${fmt(capSen)} ceiling, which is why it is not in the list above. `
+                + (place.total_sen > roomSen
+                  ? `It is over today's room too, by RM${fmt(overSen)}.`
+                  : `Today's room would still cover it — RM${fmt(roomSen)} is there.`)
+              : `This is RM${fmt(overSen)} over today's room. I'd have to propose a recovery scenario, and you'd have to approve it.`)}
       </p>
 
       <div className="evidence" style={{ marginTop: 16 }}>
@@ -370,12 +459,22 @@ export function DayPlan() {
   // disagreeing.
   const [sort, setSort] = useState<SortId>("balanced");
   const [halalOnly, setHalalOnly] = useState(true);
+  // Null is every kind, and it is where this starts and returns to. There is no
+  // chip per kind: the curated set carries twenty-two of them, which is a wall
+  // of controls nobody reads. The ask box sets this, and the one chip that
+  // appears when it is set is how it comes off again.
+  const [kind, setKind] = useState<string | null>(null);
   const [capSen, setCapSen] = useState<number | undefined>(undefined);
   const [origin, setOrigin] = useState({ ...KLCC, real: false });
   const [locState, setLocState] = useState<LocState>("idle");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [ask, setAsk] = useState("");
+  // The sentence already handed to the Butler, so the offer is not made twice
+  // over for the same one. Held as the sentence rather than as a flag: a new
+  // reading arrives under a new sentence, and comparing the two is what clears
+  // this without a second piece of wiring to forget.
+  const [handedOff, setHandedOff] = useState<string | null>(null);
   const sheetHost = useContext(SheetHostContext);
   const addPlan = useAddPlanToToday();
   const interpret = useInterpretDayPlan();
@@ -386,6 +485,7 @@ export function DayPlan() {
     mode,
     halalOnly,
     capSen,
+    kind,
   });
 
   useEffect(() => {
@@ -445,6 +545,7 @@ export function DayPlan() {
         mode,
         halal_only: halalOnly,
         cap_sen: capSen ?? null,
+        kind,
         sort,
       },
       {
@@ -453,6 +554,10 @@ export function DayPlan() {
           setMode(read.filters.mode);
           setHalalOnly(read.filters.halal_only);
           setCapSen(read.filters.cap_sen ?? undefined);
+          // Only ever a kind the places themselves carry: the server drops a
+          // category the data does not have and reports it as unread, so this
+          // can never be set to a word that would empty the list for good.
+          setKind(read.filters.kind ?? null);
           setSort(read.filters.sort);
         },
       },
@@ -475,6 +580,25 @@ export function DayPlan() {
   };
 
   const said = interpret.isError ? ASK_FAILED : interpret.data ? askLine(interpret.data) : null;
+
+  /**
+   * The part of a sentence no chip can hold, and where it can go instead.
+   *
+   * `unread` is most often a question: what is worth eating, whether tonight is
+   * the night for it, somewhere with a table outside. The filters have nothing
+   * to say to any of that, and a reply printed here would be a second account
+   * of the same list with nothing on the page to say which of the two the rows
+   * came from. So the offer is to move the question rather than to answer it —
+   * the Butler can reason, and it can commit a plan through the approval card.
+   *
+   * The whole sentence goes across, never the fragment: "under RM15" is the
+   * half that makes "what should I actually eat tonight" answerable at all. It
+   * is read off the mutation rather than off the box, so it is the sentence
+   * that was actually interpreted and not whatever has been typed since.
+   */
+  const askedText = interpret.data ? (interpret.variables?.text ?? null) : null;
+  const unread = interpret.data?.unread ?? "";
+  const waitingInButler = askedText !== null && handedOff === askedText;
 
   // Built above the early return and rendered in both branches. A sentence that
   // changed the mode sends the list back to loading, and taking the box the
@@ -509,6 +633,30 @@ export function DayPlan() {
           {said}
         </p>
       )}
+      {unread !== "" && askedText !== null && (
+        waitingInButler ? (
+          // Tapping it cannot move the user here: which tab is on screen is
+          // held by the shell above, and this screen is handed no way to
+          // change it. So the handoff says plainly what is left to do rather
+          // than looking like a button that did nothing.
+          <p className="ask-said" role="status">
+            That question is waiting in the Butler. Open the Butler tab below and I&apos;ll answer
+            it there.
+          </p>
+        ) : (
+          <button
+            type="button"
+            className="btn btn-line btn-sm"
+            style={{ marginTop: 10 }}
+            onClick={() => {
+              handToButler(askedText);
+              setHandedOff(askedText);
+            }}
+          >
+            Ask Kira about this
+          </button>
+        )
+      )}
     </Reveal>
   );
 
@@ -534,6 +682,15 @@ export function DayPlan() {
   // all this does: `sortPlaces` reads the figures and returns the same places,
   // so no ringgit and no minute on the page depends on which sort is on.
   const results = sortPlaces(data.places, sort);
+  // Left in the order the server sent — cheapest first, which here means
+  // nearest to the ceiling. Deliberately not run through `sortPlaces`: this
+  // group's order is what makes the first row "the closest", and the sort
+  // control is not even on screen when this appears (it needs two rows in the
+  // list above, and there are none).
+  const overCap = data.nearest_over_cap;
+  // The nearest miss of all, and the only one the copy above quotes a figure
+  // from. Undefined on almost every response, which is the ordinary case.
+  const closest = overCap[0];
   // Both figures are the server's own, never inferred here: on a day already
   // spent out the room is nil, and dividing to recover it would invent one.
   const roomSen = data.room_sen;
@@ -558,7 +715,14 @@ export function DayPlan() {
   // so the first one that is nil is the cause.
   const outOfRange = data.nearby_count === 0;
   const filteredOut = !outOfRange && data.matching_count === 0;
+  // The kind this list was actually filtered by, which trails the chip while a
+  // newly read one is still in flight — the same reason the ceiling below is
+  // read off the response rather than off the slider.
+  const shownKind = data.kind;
+  const noneOfThatKind = !outOfRange && !filteredOut && shownKind !== null
+    && data.kind_count === 0;
   const nearbyCount = data.nearby_count;
+  const matchingCount = data.matching_count;
   // The basis is per-place: one search routes some destinations and fails on
   // others. Where the whole list fell back there is nothing to tell apart down
   // the rows, and one line above says it better than twenty-seven repetitions;
@@ -569,8 +733,29 @@ export function DayPlan() {
   ).length;
   const everyPlaceFellBack = results.length > 0 && straightLineCount === results.length;
   const someFellBack = straightLineCount > 0 && !everyPlaceFellBack;
+  // The same rule read over the near-miss group on its own. It only ever
+  // appears with the list above empty, so the two never share a caption.
+  const overCapStraightLine = overCap.filter(
+    (place) => place.distance_basis === "straight_line",
+  ).length;
+  const overCapFellBack = overCapStraightLine > 0 && overCapStraightLine < overCap.length;
+  const everyOverCapFellBack = overCap.length > 0 && overCapStraightLine === overCap.length;
   const modeLabel = MODES.find((candidate) => candidate.id === mode)?.label ?? mode;
-  const selected = results.find((place) => place.id === selectedId) ?? null;
+  // Both groups, because a near miss is tappable too. Whichever it came from
+  // decides what the sheet is allowed to say about the ceiling.
+  const selected = results.find((place) => place.id === selectedId)
+    ?? overCap.find((place) => place.id === selectedId)
+    ?? null;
+  const selectedIsOverCap = selected !== null && overCap.some((p) => p.id === selected.id);
+  // What the group still honours, said above it, so an offer from over the
+  // ceiling can never read as a filter quietly dropped. Each word has to be
+  // true of the rows themselves as well as asked for: the kind comes from the
+  // server's own echo, and "halal" is claimed only where the toggle is on and
+  // every row in the group actually is.
+  const stillHolds = [
+    shownKind?.toLowerCase() ?? null,
+    halalOnly && overCap.every((place) => place.halal) ? "halal" : null,
+  ].filter((word): word is string => word !== null);
   // Null on most lists, and that is the point: the badge is a claim, not a
   // label for row one. See bestFitId for the three things that have to hold.
   const bestFit = bestFitId(results, sort, mode);
@@ -664,8 +849,10 @@ export function DayPlan() {
                   ? "Distance is what is in the way here, not the ceiling."
                   : filteredOut
                     ? "The halal filter is what is in the way here, not the ceiling."
-                    : "Nothing fits that ceiling yet. Drag it up and I'll show you what appears."
-                : `${results.length} place${results.length > 1 ? "s" : ""} fit, ${modeLabel.toLowerCase()} from ${origin.real ? "where you are" : "KLCC"}. The price on each place is the whole outing — meal and travel together.`}
+                    : noneOfThatKind
+                      ? `Nothing within range of here is ${shownKind.toLowerCase()}, and no ceiling changes that.`
+                      : "Nothing fits that ceiling yet. Drag it up and I'll show you what appears."
+                : `${results.length} ${shownKind ? `${shownKind.toLowerCase()} ` : ""}place${results.length > 1 ? "s" : ""} fit, ${modeLabel.toLowerCase()} from ${origin.real ? "where you are" : "KLCC"}. The price on each place is the whole outing — meal and travel together.`}
             </p>
           </section>
         </Reveal>
@@ -695,6 +882,22 @@ export function DayPlan() {
             >
               Halal
             </button>
+            {/* Only on screen while it is set, and tapping it is how it comes
+                off. A filter the ask box turned on that the user can only see
+                in the list it emptied is a filter they cannot argue with. */}
+            {kind !== null && (
+              <button
+                type="button"
+                className="fchip on"
+                aria-label={`Clear the ${kind} filter`}
+                onClick={() => {
+                  clearReading();
+                  setKind(null);
+                }}
+              >
+                {kind} ✕
+              </button>
+            )}
             <button
               type="button"
               className={`fchip ${locState === "ok" ? "on" : ""}`}
@@ -771,7 +974,10 @@ export function DayPlan() {
           </Reveal>
         )}
 
-        {everyPlaceFellBack && (
+        {/* Said once above whichever group is on screen. The two never appear
+            together — the near misses only turn up with the list empty — so one
+            caption can speak for both. */}
+        {(everyPlaceFellBack || everyOverCapFellBack) && (
           <Reveal delay={55} style={{ marginTop: 14 }}>
             <p
               role="status"
@@ -787,53 +993,20 @@ export function DayPlan() {
         <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 18 }}>
           {results.map((place, index) => (
             <Reveal key={place.id} delay={index * 70}>
-              <button
-                type="button"
-                className={`place ${selectedId === place.id ? "sel" : ""}`}
+              <PlaceRow
+                place={place}
+                rank={index + 1}
+                selected={selectedId === place.id}
+                badge={place.id === bestFit ? "best" : null}
+                nameTheBasis={someFellBack}
                 // A failure belongs to the place it happened on. Left standing,
                 // it would greet the next sheet with a complaint about a shop
                 // the user is no longer looking at.
-                onClick={() => {
+                onSelect={() => {
                   addPlan.reset();
                   setSelectedId(place.id);
                 }}
-              >
-                <span className="place-rank">{index + 1}</span>
-                <span style={{ flex: 1, minWidth: 0 }}>
-                  <span style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                    <b style={{ fontSize: 15, letterSpacing: "-.02em" }}>{place.name}</b>
-                    {place.id === bestFit && <span className="badge badge-best">Best fit</span>}
-                    {place.band === "over" && <span className="badge badge-over">Over</span>}
-                  </span>
-                  <span style={{ display: "block", fontSize: 12, color: "var(--muted)", marginTop: 3 }}>
-                    {place.kind} · {distanceText(place, someFellBack)} · {place.minutes} min
-                  </span>
-                  <span
-                    style={{
-                      display: "block",
-                      fontSize: 12,
-                      marginTop: 3,
-                      color:
-                        place.band === "over"
-                          ? "var(--clay)"
-                          : place.band === "tight"
-                            ? "var(--brass)"
-                            : "var(--muted)",
-                    }}
-                  >
-                    {place.share !== null
-                      ? `${Math.round(place.share * 100)}% of today's room`
-                      : "Nothing left in today's room"}
-                    {place.travel_sen > 0 && ` · incl. RM${fmt(place.travel_sen)} travel`}
-                  </span>
-                </span>
-                <span style={{ textAlign: "right", flex: "none" }}>
-                  <span className="money" style={{ fontSize: 18, display: "block" }}>
-                    RM{fmt(place.total_sen)}
-                  </span>
-                  <span className="tag" style={{ color: "var(--brass)" }}>Est · {place.confidence}</span>
-                </span>
-              </button>
+              />
             </Reveal>
           ))}
 
@@ -889,13 +1062,53 @@ export function DayPlan() {
                       Turn Halal off
                     </button>
                   </>
+                ) : noneOfThatKind ? (
+                  <>
+                    <p className="voice" style={{ margin: 0, fontSize: 16 }}>
+                      {matchingCount === 1
+                        ? `The one place within range of here is not ${shownKind.toLowerCase()}.`
+                        : `None of the ${matchingCount} places within range of here are ${shownKind.toLowerCase()}.`}
+                    </p>
+                    <p style={{ margin: "8px 0 0", fontSize: 13, color: "var(--muted)", lineHeight: 1.5 }}>
+                      {/* Not the ceiling and not the distance: there is food
+                          here, it is simply not that food, and no slider on
+                          this screen reaches that. */}
+                      Raising the ceiling will not change that. Drop the {shownKind} filter to see
+                      what is actually around you.
+                    </p>
+                    <button
+                      type="button"
+                      className="btn btn-line btn-sm"
+                      style={{ marginTop: 12 }}
+                      onClick={() => {
+                        clearReading();
+                        setKind(null);
+                      }}
+                    >
+                      Show every kind
+                    </button>
+                  </>
                 ) : (
                   <>
                     <p className="voice" style={{ margin: 0, fontSize: 16 }}>
-                      {/* The ceiling this list was filtered by, which trails the
-                          slider while a newly dragged one is still in flight. */}
-                      Nothing under RM{fmt(data.cap_sen)} yet.
+                      {/* The ceiling and the kind this list was filtered by,
+                          both of which trail the controls while a newly set one
+                          is still in flight. */}
+                      {shownKind
+                        ? `No ${shownKind.toLowerCase()} under RM${fmt(data.cap_sen)} yet.`
+                        : `Nothing under RM${fmt(data.cap_sen)} yet.`}
                     </p>
+                    {/* True, and on its own useless — the person still has to
+                        eat. The server already knows what the nearest thing
+                        costs, so the shortfall is stated as a figure rather
+                        than left as an absence. */}
+                    {closest && (
+                      <p style={{ margin: "8px 0 0", fontSize: 13, color: "var(--muted)", lineHeight: 1.5 }}>
+                        The closest is RM{fmt(closest.total_sen)} — RM
+                        {fmt(closest.total_sen - data.cap_sen)} over.{" "}
+                        {overCap.length === 1 ? "It is" : "They are"} below.
+                      </p>
+                    )}
                     <p style={{ margin: "8px 0 0", fontSize: 13, color: "var(--muted)", lineHeight: 1.5 }}>
                       Raise the ceiling, walk instead of riding, or eat at home — groceries usually beat
                       a delivered meal on the same money.
@@ -904,6 +1117,44 @@ export function DayPlan() {
                 )}
               </div>
             </Reveal>
+          )}
+
+          {/* Its own heading, its own tinted rows, its own badge. The server
+              sends these in a separate field for exactly this reason: they are
+              never part of the list above, and nothing here may let them read
+              as though they were. */}
+          {overCap.length > 0 && (
+            <>
+              <Reveal delay={40} style={{ marginTop: 4 }}>
+                <p className="eyebrow" style={{ margin: 0 }}>
+                  Over your ceiling
+                </p>
+                <p style={{ margin: "7px 0 0", fontSize: 13, color: "var(--muted)", lineHeight: 1.5 }}>
+                  Nothing fitted RM{fmt(data.cap_sen)}, so here{" "}
+                  {overCap.length === 1
+                    ? "is the one place"
+                    : `are the ${overCap.length} places`} closest above it
+                  {stillHolds.length > 0 ? `, still ${stillHolds.join(" and ")}` : ""}.{" "}
+                  {overCap.length === 1 ? "It is" : "They are"} not in the list because{" "}
+                  {overCap.length === 1 ? "it does" : "they do"} not fit.
+                </p>
+              </Reveal>
+              {overCap.map((place, index) => (
+                <Reveal key={place.id} delay={60 + index * 70}>
+                  <PlaceRow
+                    place={place}
+                    rank={index + 1}
+                    selected={selectedId === place.id}
+                    badge="over-cap"
+                    nameTheBasis={overCapFellBack}
+                    onSelect={() => {
+                      addPlan.reset();
+                      setSelectedId(place.id);
+                    }}
+                  />
+                </Reveal>
+              ))}
+            </>
           )}
         </div>
 
@@ -920,6 +1171,8 @@ export function DayPlan() {
           place={selected}
           modeLabel={modeLabel}
           roomSen={roomSen}
+          capSen={data.cap_sen}
+          overCap={selectedIsOverCap}
           adding={addPlan.isPending}
           addFailed={addPlan.isError}
           onClose={() => setSelectedId(null)}

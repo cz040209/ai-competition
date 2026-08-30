@@ -414,6 +414,11 @@ export interface paths {
         /**
          * Get Places
          * @description The cap only filters the list; the room is what every band is judged on.
+         *
+         *     ``kind`` narrows to one sort of food and is echoed back beside the counts,
+         *     because the client cannot read its own state against a list that is still
+         *     in flight: the answer on screen has to say which kind it was actually
+         *     filtered by, exactly as it says which ceiling.
          */
         get: operations["get_places_v1_day_plan_places_get"];
         put?: never;
@@ -793,6 +798,8 @@ export interface components {
             halal_only: boolean;
             /** Cap Sen */
             cap_sen?: number | null;
+            /** Kind */
+            kind?: string | null;
             /**
              * Sort
              * @default balanced
@@ -826,6 +833,8 @@ export interface components {
             halal_only: boolean;
             /** Cap Sen */
             cap_sen?: number | null;
+            /** Kind */
+            kind?: string | null;
             /**
              * Sort
              * @default balanced
@@ -870,25 +879,48 @@ export interface components {
          *     is zero on a day already spent out, and a client dividing to recover it
          *     would turn that zero into a number the user never had.
          *
-         *     ``nearby_count`` is how many places the radius held before the halal and
-         *     cap filters ran, and ``matching_count`` how many were still standing after
-         *     the halal filter but before the ceiling. Without both, an empty ``places``
-         *     is unreadable: a client would have to guess which of three causes emptied
-         *     it, and would blame the ceiling for a distance no ceiling can close or for
-         *     a halal toggle no ceiling can reach. The counts nest, so the first of them
-         *     that is nil is the cause.
+         *     ``nearby_count`` is how many places the radius held before any filter ran,
+         *     ``matching_count`` how many were still standing after the halal filter, and
+         *     ``kind_count`` how many of those were the kind of food that was asked for —
+         *     all three before the ceiling. Without them, an empty ``places`` is
+         *     unreadable: a client would have to guess which of four causes emptied it,
+         *     and would blame the ceiling for a distance no ceiling can close, for a
+         *     halal toggle no ceiling can reach, or for there being no noodles in this
+         *     part of town. The counts nest, so the first of them that is nil is the
+         *     cause.
+         *
+         *     ``kind`` is the food filter this list was actually built with, echoed back.
+         *     Null means none was asked for. A client reads it rather than its own state
+         *     for the same reason it reads ``cap_sen``: while a newly tapped filter is in
+         *     flight, its own state describes a list that has not arrived yet.
+         *
+         *     ``nearest_over_cap`` is the cheapest few places the ceiling turned away, and
+         *     it is only ever non-empty when ``places`` is empty. It is a separate field
+         *     rather than extra rows in ``places`` precisely so that no client can render
+         *     it as though it had fitted: every place in it costs more than ``cap_sen``,
+         *     each carries ``band: "over"`` to say so on the row itself, and a client that
+         *     shows them owes the user a heading that says what they are. Every other
+         *     filter still holds over it — halal is still halal and ``kind`` is still that
+         *     kind — so the ceiling is the only thing relaxed, and only to say what the
+         *     money would have to stretch to.
          */
         DayPlanResponse: {
             /** Room Sen */
             room_sen: number;
             /** Cap Sen */
             cap_sen: number;
+            /** Kind */
+            kind: string | null;
             /** Nearby Count */
             nearby_count: number;
             /** Matching Count */
             matching_count: number;
+            /** Kind Count */
+            kind_count: number;
             /** Places */
             places: components["schemas"]["PlaceResponse"][];
+            /** Nearest Over Cap */
+            nearest_over_cap: components["schemas"]["PlaceResponse"][];
         };
         /** GoalSummaryResponse */
         GoalSummaryResponse: {
@@ -1849,6 +1881,7 @@ export interface operations {
                 halal_only?: boolean;
                 cap_sen?: number | null;
                 radius_km?: number;
+                kind?: string | null;
             };
             header?: never;
             path?: never;

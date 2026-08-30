@@ -25,7 +25,7 @@ from kira.agent.tools.day_plan import PlanArgs
 from kira.agent.tools.spec import money_str
 from kira.config import get_settings
 from kira.money import Money
-from kira.services.day_plan import Mode
+from kira.services.day_plan import Mode, resolve_kind
 
 # The three orders the Plan screen offers. They live on the client, because
 # ordering a list it already holds costs no round trip -- but a sentence is
@@ -73,6 +73,9 @@ class Filters:
     # None means the screen has no ceiling of its own and today's safe-to-spend
     # is standing in for one.
     cap_sen: int | None
+    # One kind of food, in the curated set's own spelling, or None for all of
+    # them. Only ever a word that set carries -- see ``interpret``.
+    kind: str | None
     sort: Sort
 
 
@@ -117,6 +120,11 @@ stays exactly as it is, so do not restate a control the user said nothing about.
 
 Money is in sen. RM15 is 1500.
 
+The kind of food is not free text. Set it only to one of the words listed in its
+description, and only when the sentence actually asks for that food. A word that
+is not in that list will be dropped and read back to the user as something I
+could not place, so guessing at the nearest category costs them their filter.
+
 Where the search is measured from is not yours to set. It comes from the user's
 device, and a location they did not give would move the whole list somewhere they
 never asked about. If the sentence names a place to search near, put those words
@@ -149,6 +157,7 @@ def _current_block(current: Filters, currency: str) -> str:
             f"- travelling: {current.mode}",
             f"- halal only: {'on' if current.halal_only else 'off'}",
             f"- ceiling: {ceiling}",
+            f"- kind of food: {current.kind or 'any'}",
             f"- order: {current.sort}",
         )
     )
@@ -171,6 +180,8 @@ def _understood(before: Filters, after: Filters, currency: str) -> str:
             if after.cap_sen is not None
             else "no ceiling but today's room"
         )
+    if after.kind != before.kind:
+        said.append(after.kind.lower() if after.kind is not None else "any kind of food")
     if after.mode != before.mode:
         said.append(_MODE_WORDS[after.mode])
     if after.sort != before.sort:
@@ -217,6 +228,25 @@ async def interpret(text: str, current: Filters, *, currency: str = "MYR") -> In
     # the LRT would quietly put them back on foot -- a change they did not ask
     # for is the same failure as a change half-applied.
     said = read.model_fields_set
+
+    # A kind is the one control whose vocabulary is finite and not the model's.
+    # Asked for somewhere "hawker" or "healthy", a live model will fill this
+    # field confidently with a word no place carries, and applying it would
+    # empty the list behind a chip the user cannot argue with -- the screen
+    # would be showing them nothing on the strength of a category that does not
+    # exist. So an unrecognised word sets no filter and is handed back as
+    # unread, which is what the box already does with the rest of a sentence it
+    # could not place. A recognised one is stored in the set's own spelling, so
+    # the chip reads like the places do.
+    kind, unplaceable = current.kind, ""
+    if "kind" in said:
+        if read.kind is None:
+            kind = None
+        elif (resolved := resolve_kind(read.kind)) is not None:
+            kind = resolved
+        else:
+            unplaceable = read.kind.strip()
+
     after = Filters(
         # The origin is the caller's, always. Whatever the model put in lat/lng
         # is dropped here rather than trusted: a location the user never gave is
@@ -226,10 +256,14 @@ async def interpret(text: str, current: Filters, *, currency: str = "MYR") -> In
         mode=read.mode if "mode" in said else current.mode,
         halal_only=read.halal_only if "halal_only" in said else current.halal_only,
         cap_sen=read.cap_sen if "cap_sen" in said else current.cap_sen,
+        kind=kind,
         sort=read.sort if "sort" in said else current.sort,
     )
 
-    unread = read.unread.strip()
+    # Joined rather than one replacing the other: a sentence can name a place to
+    # search near and a kind of food nothing here serves, and dropping either
+    # would be the screen going quiet about half of what it could not use.
+    unread = ", ".join(part for part in (read.unread.strip(), unplaceable) if part)
     understood = _understood(current, after, currency)
     if not understood:
         # It parsed, and it asked for nothing. Applying that would leave a line

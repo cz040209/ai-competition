@@ -74,8 +74,10 @@ const ACTIVITY = {
 const DAY_PLAN: DayPlan = {
   room_sen: 5297,
   cap_sen: 5297,
+  kind: null,
   nearby_count: 1,
   matching_count: 1,
+  kind_count: 1,
   places: [
     {
       id: "p1",
@@ -97,6 +99,7 @@ const DAY_PLAN: DayPlan = {
       halal: true,
     },
   ],
+  nearest_over_cap: [],
 };
 
 /** Mutable so a test can prove the screens re-read after a confirm. */

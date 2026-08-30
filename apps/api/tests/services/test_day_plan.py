@@ -22,6 +22,9 @@ from kira.services.day_plan import (
     confidence_for,
     evaluate_place,
     find_places,
+    kind_key,
+    known_kinds,
+    resolve_kind,
 )
 from kira.services.snapshot import load_snapshot
 from kira.services.transactions import confirm_draft, list_activity
@@ -274,10 +277,10 @@ class TestMatchingCount:
             room_sen=100_000,
         )
         assert found.places == ()
-        # Two of the five places in range are not halal, and the ceiling of one
+        # Two of the seven places in range are not halal, and the ceiling of one
         # sen is what emptied the rest -- which is the count that says so.
-        assert found.nearby_count == 5
-        assert found.matching_count == 3
+        assert found.nearby_count == 7
+        assert found.matching_count == 5
 
     async def test_the_halal_filter_alone_can_empty_a_generous_ceiling(self, place_world):
         # 4.9 km south of Chophouse Lima: it is the one place in range, and it
@@ -315,6 +318,465 @@ class TestMatchingCount:
         )
         assert found.nearby_count >= found.matching_count >= len(found.places)
         assert found.nearby_count > found.matching_count > len(found.places)
+
+
+class TestTheKindFilter:
+    """"I want noodles" used to be unanswerable: nothing in the search carried
+    what kind of food it was for, so every reply was the same cheapest-first
+    list with the request quietly dropped out of it."""
+
+    async def test_it_returns_only_that_kind(self, place_world):
+        found = await find_places(
+            **place_world.origin,
+            mode="walk",
+            halal_only=False,
+            cap_sen=100_000,
+            room_sen=100_000,
+            kind="Cafe",
+        )
+        assert [p.name for p in found.places] == [
+            place_world.cheap.name,
+            place_world.second_cafe.name,
+        ]
+        assert {p.kind for p in found.places} == {"Cafe"}
+
+    async def test_case_and_a_plural_are_forgiven_in_both_spellings(self, place_world):
+        # "Noodles" is how the data spells it and "noodle" is how a person asks
+        # for it; "japanese" differs from the data only in its capital.
+        for asked in ("noodle", "noodles", "NOODLES", " Noodles "):
+            found = await find_places(
+                **place_world.origin,
+                mode="walk",
+                halal_only=False,
+                cap_sen=100_000,
+                room_sen=100_000,
+                kind=asked,
+            )
+            assert [p.name for p in found.places] == [place_world.noodles.name], asked
+
+        japanese = await find_places(
+            **place_world.origin,
+            mode="walk",
+            halal_only=False,
+            cap_sen=100_000,
+            room_sen=100_000,
+            kind="japanese",
+        )
+        assert [p.name for p in japanese.places] == [place_world.pricey.name]
+
+    async def test_a_word_nothing_matches_returns_nothing_rather_than_everything(
+        self, place_world
+    ):
+        """The failure this is written against.
+
+        Widening back out to the whole list is the same mistake as silently
+        dropping "halal": the user reads a list they never asked for as the
+        answer to the request they did make.
+        """
+        found = await find_places(
+            **place_world.origin,
+            mode="walk",
+            halal_only=False,
+            cap_sen=100_000,
+            room_sen=100_000,
+            kind="Hawker",
+        )
+        assert found.places == ()
+        assert found.kind_count == 0
+        # And the two counts above it are untouched, so the cause is readable:
+        # there is food here, it is simply not that food.
+        assert found.nearby_count == 7
+        assert found.matching_count == 7
+
+    async def test_an_empty_kind_is_told_apart_from_an_empty_ceiling(self, place_world):
+        by_kind = await find_places(
+            **place_world.origin,
+            mode="walk",
+            halal_only=False,
+            cap_sen=100_000,
+            room_sen=100_000,
+            kind="Korean",
+        )
+        by_ceiling = await find_places(
+            **place_world.origin,
+            mode="walk",
+            halal_only=False,
+            cap_sen=1,
+            room_sen=100_000,
+        )
+        assert by_kind.places == by_ceiling.places == ()
+        # Identical lists, and the counts are the whole difference between
+        # "drag the ceiling" and "there is no Korean food around here".
+        assert by_kind.kind_count == 0
+        assert by_ceiling.kind_count == by_ceiling.matching_count == 7
+
+    async def test_the_counts_still_nest_with_a_kind_asked_for(self, place_world):
+        found = await find_places(
+            **place_world.origin,
+            mode="walk",
+            halal_only=True,
+            cap_sen=1000,  # admits only Kopi Kaki's 900
+            room_sen=100_000,
+            kind="Cafe",
+        )
+        assert found.nearby_count == 7
+        assert found.matching_count == 5  # two of the seven are not halal
+        assert found.kind_count == 2  # both cafes are
+        assert len(found.places) == 1  # and only one of them is under RM10
+
+    async def test_the_kind_is_counted_after_the_halal_filter_not_before_it(self, place_world):
+        # Bak Kut Teh Tiga is the only Chinese place and it is not halal, so a
+        # halal search for Chinese food has nothing to offer -- and says so with
+        # the kind count rather than with the halal one, which is about the two
+        # places that were dropped before this filter ever ran.
+        found = await find_places(
+            **place_world.origin,
+            mode="walk",
+            halal_only=True,
+            cap_sen=100_000,
+            room_sen=100_000,
+            kind="Chinese",
+        )
+        assert found.places == ()
+        assert found.matching_count == 5
+        assert found.kind_count == 0
+
+    async def test_no_kind_asked_for_leaves_the_list_and_the_count_alone(self, place_world):
+        found = await find_places(
+            **place_world.origin,
+            mode="walk",
+            halal_only=False,
+            cap_sen=100_000,
+            room_sen=100_000,
+        )
+        assert len(found.places) == 7
+        assert found.kind_count == found.matching_count == 7
+
+
+class TestTheKindVocabulary:
+    """What a model is offered, and what a sentence is checked against."""
+
+    def test_it_is_derived_from_the_loaded_places_not_written_beside_them(self):
+        # A hand-kept list would go on offering a word the regenerated file no
+        # longer has, which is a filter that matches nothing for a reason
+        # nobody reading the code can see.
+        from kira.adapters.fakes import KL_PLACES
+
+        assert set(known_kinds()) == {place.kind for place in KL_PLACES}
+        assert list(known_kinds()) == sorted(known_kinds())
+
+    def test_a_word_the_set_carries_resolves_to_its_own_spelling(self):
+        assert resolve_kind("japanese") == "Japanese"
+        assert resolve_kind("noodle") == "Noodles"
+        assert resolve_kind("  MAMAK ") == "Mamak"
+
+    def test_a_word_it_does_not_carry_resolves_to_nothing(self):
+        # Not to the nearest thing, and not to everything. "hawker" is the word
+        # a model reaches for first, and there is no such kind in the data.
+        assert resolve_kind("hawker") is None
+        assert resolve_kind("something nice") is None
+        assert resolve_kind("") is None
+
+    def test_the_forgiveness_runs_one_way_and_no_further(self):
+        # Case and a plural ending, and nothing else. A prefix rule would have
+        # "chi" reaching both Chicken and Chinese; a substring rule would have
+        # "tea" reaching Steakhouse.
+        assert kind_key("Noodles") == kind_key("noodle") == "noodle"
+        assert resolve_kind("chi") is None
+        assert resolve_kind("tea") is None
+        assert resolve_kind("jap") is None
+
+
+class TestThePriceLandscape:
+    """What the ceiling excluded, which the list alone can never say.
+
+    A list that came back empty under RM15 looks the same as one that came back
+    empty because there is nothing here. The landscape is the difference: the
+    mamak from RM12.50, the Japanese from RM50, and a user who can see which of
+    the two their ceiling is up against.
+    """
+
+    async def test_every_kind_in_range_gets_one_row(self, place_world):
+        found = await find_places(
+            **place_world.origin,
+            mode="walk",
+            halal_only=False,
+            cap_sen=100_000,
+            room_sen=100_000,
+        )
+        rows = {row.kind: row for row in found.landscape}
+        assert set(rows) == {"Cafe", "Mamak", "Chinese", "Japanese", "Western", "Noodles"}
+        # Two cafes, counted as two, priced at the cheaper of them.
+        assert rows["Cafe"].count == 2
+        assert rows["Cafe"].cheapest_total_sen == 900
+        assert rows["Japanese"].count == 1
+        assert rows["Japanese"].cheapest_total_sen == 5000
+
+    async def test_it_is_ordered_cheapest_kind_first(self, place_world):
+        found = await find_places(
+            **place_world.origin,
+            mode="walk",
+            halal_only=False,
+            cap_sen=100_000,
+            room_sen=100_000,
+        )
+        prices = [row.cheapest_total_sen for row in found.landscape]
+        assert prices == sorted(prices)
+
+    async def test_it_agrees_with_the_list_it_was_computed_from(self, place_world):
+        found = await find_places(
+            **place_world.origin,
+            mode="ride",  # travel money in every total, so the two could differ
+            halal_only=False,
+            cap_sen=100_000,
+            room_sen=100_000,
+        )
+        rows = {row.kind: row for row in found.landscape}
+        for place in found.places:
+            row = rows[place.kind]
+            # The cheapest of a kind is a floor under every place of that kind,
+            # and the place that set it is in the list at exactly that price.
+            assert row.cheapest_total_sen <= place.total_sen
+        for kind, row in rows.items():
+            same_kind = [p.total_sen for p in found.places if p.kind == kind]
+            assert min(same_kind) == row.cheapest_total_sen
+            assert len(same_kind) == row.count
+
+    async def test_it_ignores_the_ceiling_because_that_is_what_it_is_for(self, place_world):
+        found = await find_places(
+            **place_world.origin,
+            mode="walk",
+            halal_only=False,
+            cap_sen=1,  # admits nothing at all
+            room_sen=100_000,
+        )
+        assert found.places == ()
+        # The whole point: with the list empty, this is the only thing left that
+        # can say what the ceiling is up against.
+        assert [row.kind for row in found.landscape][0] == "Cafe"
+        assert found.landscape[0].cheapest_total_sen == 900
+        assert len(found.landscape) == 6
+
+    async def test_it_ignores_the_kind_that_was_asked_for(self, place_world):
+        # Asked for Japanese, the useful answer to "there is none" is what is
+        # here instead -- and a landscape narrowed to Japanese would be as empty
+        # as the list beside it.
+        found = await find_places(
+            **place_world.origin,
+            mode="walk",
+            halal_only=False,
+            cap_sen=100_000,
+            room_sen=100_000,
+            kind="Korean",
+        )
+        assert found.places == ()
+        assert len(found.landscape) == 6
+
+    async def test_it_honours_the_halal_filter(self, place_world):
+        # Not a ceiling to argue with: the user has said what they eat, and
+        # pricing the pork noodles they excluded is not information they asked
+        # for.
+        found = await find_places(
+            **place_world.origin,
+            mode="walk",
+            halal_only=True,
+            cap_sen=100_000,
+            room_sen=100_000,
+        )
+        assert {row.kind for row in found.landscape} == {"Cafe", "Mamak", "Japanese", "Noodles"}
+
+    async def test_nothing_in_range_is_an_empty_landscape_not_a_missing_one(self, place_world):
+        found = await find_places(
+            **place_world.out_of_range,
+            mode="walk",
+            halal_only=False,
+            cap_sen=100_000,
+            room_sen=100_000,
+        )
+        assert found.landscape == ()
+
+    async def test_it_is_priced_on_the_road_where_the_list_is(self, place_world):
+        # The two must not come apart. A landscape built on straight lines under
+        # a list built on roads would be two prices for the same outing.
+        with serving(StubRouting({"w2": 1200.0})):
+            found = await find_places(
+                **place_world.origin,
+                mode="ride",
+                halal_only=False,
+                cap_sen=100_000,
+                room_sen=100_000,
+            )
+        mamak = next(row for row in found.landscape if row.kind == "Mamak")
+        listed = next(p for p in found.places if p.kind == "Mamak")
+        assert listed.distance_basis == "road"
+        assert mamak.cheapest_total_sen == listed.total_sen == 1250 + 728
+
+
+class TestTheNearestPlacesAboveTheCeiling:
+    """A ceiling of RM5 in a world whose cheapest outing is RM9.
+
+    "Nothing under RM5" is true and it is useless: the person still has to eat,
+    and the search already knows the nearest thing is RM9. So the cheapest few
+    of what the ceiling turned away come back in their own field -- never in
+    ``places``, because a ceiling quietly widened is the same lie as a dropped
+    "halal".
+    """
+
+    async def test_a_ceiling_below_everything_still_offers_the_nearest(self, place_world):
+        found = await find_places(
+            **place_world.origin,
+            mode="walk",
+            halal_only=False,
+            cap_sen=500,  # every place in the world is dearer than this
+            room_sen=100_000,
+        )
+        assert found.places == ()
+        # The three cheapest of the seven, cheapest first: RM9, RM12.50, RM16.
+        assert [p.name for p in found.nearest_over_cap] == [
+            place_world.cheap.name,
+            place_world.mid.name,
+            place_world.near_non_halal.name,
+        ]
+        assert [p.total_sen for p in found.nearest_over_cap] == [900, 1250, 1600]
+
+    async def test_they_are_told_apart_from_places_that_fitted(self, place_world):
+        # The whole shape of the answer: the group is its own field, and every
+        # place in it costs more than the ceiling it was measured against.
+        found = await find_places(
+            **place_world.origin,
+            mode="walk",
+            halal_only=False,
+            cap_sen=500,
+            room_sen=100_000,
+        )
+        assert found.places == ()
+        assert all(place.total_sen > 500 for place in found.nearest_over_cap)
+        fitted = {place.id for place in found.places}
+        assert not fitted & {place.id for place in found.nearest_over_cap}
+
+    async def test_every_one_of_them_carries_the_over_band(self, place_world):
+        # The room is generous, so left as evaluated these would come back "ok"
+        # and could be drawn exactly like a place that fitted. The band is what
+        # every client already renders as "this does not fit what you asked
+        # for", and not fitting is the only reason any of them is here.
+        found = await find_places(
+            **place_world.origin,
+            mode="walk",
+            halal_only=False,
+            cap_sen=500,
+            room_sen=100_000,
+        )
+        assert [place.band for place in found.nearest_over_cap] == ["over", "over", "over"]
+        # The share is a real ratio against a real room and is left alone.
+        assert found.nearest_over_cap[0].share == 900 / 100_000
+
+    async def test_a_ceiling_that_admits_some_places_offers_no_group_at_all(self, place_world):
+        # The trigger is a completely empty list, never a thin one. A list with
+        # somewhere to eat in it does not get topped up from above the ceiling.
+        found = await find_places(
+            **place_world.origin,
+            mode="walk",
+            halal_only=False,
+            cap_sen=1000,  # admits Kopi Kaki at RM9 and nothing else
+            room_sen=100_000,
+        )
+        assert [place.name for place in found.places] == [place_world.cheap.name]
+        assert found.nearest_over_cap == ()
+
+    async def test_it_never_relaxes_the_halal_filter_to_fill_itself(self, place_world):
+        # Bak Kut Teh Tiga at RM16 is the third-cheapest place in the world and
+        # is not halal. Reaching past the ceiling is one thing; reaching past
+        # what the user eats is the failure this whole shape exists to avoid.
+        found = await find_places(
+            **place_world.origin,
+            mode="walk",
+            halal_only=True,
+            cap_sen=500,
+            room_sen=100_000,
+        )
+        assert found.places == ()
+        assert all(place.halal for place in found.nearest_over_cap)
+        assert [p.name for p in found.nearest_over_cap] == [
+            place_world.cheap.name,
+            place_world.mid.name,
+            place_world.noodles.name,
+        ]
+
+    async def test_it_never_relaxes_the_kind_filter_either(self, place_world):
+        found = await find_places(
+            **place_world.origin,
+            mode="walk",
+            halal_only=False,
+            cap_sen=500,
+            room_sen=100_000,
+            kind="Cafe",
+        )
+        assert found.places == ()
+        assert [p.name for p in found.nearest_over_cap] == [
+            place_world.cheap.name,
+            place_world.second_cafe.name,
+        ]
+
+    async def test_an_empty_list_the_ceiling_did_not_cause_offers_nothing(self, place_world):
+        # Nothing in range, nothing halal in range, and nothing of that kind in
+        # range are three empty lists a ceiling cannot fill and must not appear
+        # to. There is nothing above the ceiling either, because there is
+        # nothing at all.
+        out_of_range = await find_places(
+            **place_world.out_of_range,
+            mode="walk",
+            halal_only=False,
+            cap_sen=100_000,
+            room_sen=100_000,
+        )
+        no_halal = await find_places(
+            **place_world.lone_non_halal,
+            mode="walk",
+            halal_only=True,
+            cap_sen=100_000,
+            room_sen=100_000,
+        )
+        no_such_kind = await find_places(
+            **place_world.origin,
+            mode="walk",
+            halal_only=False,
+            cap_sen=100_000,
+            room_sen=100_000,
+            kind="Korean",
+        )
+        for found in (out_of_range, no_halal, no_such_kind):
+            assert found.places == ()
+            assert found.nearest_over_cap == ()
+
+    async def test_it_is_held_to_three_however_many_the_ceiling_turned_away(self, place_world):
+        # Thirteen places, all above the ceiling. A full second list would read
+        # as the ceiling having been widened rather than as what it is.
+        with serving(places=place_world.crowd):
+            found = await find_places(
+                **place_world.origin,
+                mode="walk",
+                halal_only=False,
+                cap_sen=500,
+                room_sen=100_000,
+            )
+        assert found.places == ()
+        assert len(found.nearest_over_cap) == 3
+        assert [p.total_sen for p in found.nearest_over_cap] == [1100, 1200, 1300]
+
+    async def test_it_is_priced_on_the_road_where_the_list_would_have_been(self, place_world):
+        # Same rule as the landscape: two prices for the same outing is the one
+        # thing that must not come out of this.
+        with serving(StubRouting({"w2": 1200.0})):
+            found = await find_places(
+                **place_world.origin,
+                mode="ride",
+                halal_only=False,
+                cap_sen=500,
+                room_sen=100_000,
+            )
+        mamak = next(p for p in found.nearest_over_cap if p.kind == "Mamak")
+        assert mamak.distance_basis == "road"
+        assert mamak.total_sen == 1250 + 728
 
 
 class TestTravelCost:
@@ -614,9 +1076,9 @@ class TestWithARouter:
         assert len(stub.calls) == 1, "one search is one round trip, however many places"
         origin, destinations = stub.calls[0]
         assert origin == (place_world.origin["lat"], place_world.origin["lng"])
-        # Three of the five are halal. The two the filter removed are never sent
+        # Five of the seven are halal. The two the filter removed are never sent
         # to the router: a place that will not be shown is not worth a distance.
-        assert len(destinations) == found.matching_count == 3
+        assert len(destinations) == found.matching_count == 5
 
     async def test_nothing_in_range_asks_the_router_nothing_useful(self, place_world):
         stub = StubRouting({})
@@ -701,7 +1163,7 @@ class TestARouterThatMisbehaves:
 
     async def test_an_answer_of_the_wrong_length_is_not_paired_off_anyway(self, place_world):
         class ShortRouting:
-            """Asked about five destinations, answers about one."""
+            """Asked about seven destinations, answers about one."""
 
             async def road_metres(self, origin, destinations):
                 return [1200.0]
@@ -719,7 +1181,7 @@ class TestARouterThatMisbehaves:
         # with the first destination would put one place's road on another
         # place's fare, which is a wrong number nobody could spot. The straight
         # line is wrong by a stated amount instead.
-        assert len(found.places) == 5
+        assert len(found.places) == 7
         assert {p.distance_basis for p in found.places} == {"straight_line"}
         assert all(p.road_km is None for p in found.places)
 

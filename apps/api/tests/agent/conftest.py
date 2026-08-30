@@ -11,7 +11,9 @@ from kira.services.butler_thread import ensure_thread
 
 def offline_factory(**kwargs):
     """Every test drives the same model the venue-network fallback uses."""
-    return OfflineChatModel(attachment=kwargs.get("attachment"))
+    return OfflineChatModel(
+        attachment=kwargs.get("attachment"), history=kwargs.get("history", "")
+    )
 
 
 @pytest.fixture
@@ -58,6 +60,46 @@ class ScriptedModel(OfflineChatModel):
 
 def scripted_factory(*calls):
     def factory(**kwargs):
-        return ScriptedModel(attachment=kwargs.get("attachment"), calls=list(calls))
+        return ScriptedModel(
+            attachment=kwargs.get("attachment"),
+            history=kwargs.get("history", ""),
+            calls=list(calls),
+        )
+
+    return factory
+
+
+class DecliningModel(OfflineChatModel):
+    """Answers the tool-calling turn with prose and no tool call at all.
+
+    This is the live online failure, not an invented one: asked where to eat,
+    Qwen wrote a fluent paragraph, called nothing, and on a second attempt named
+    a restaurant that is in no data file here. Composition is left to the
+    offline model underneath, so a test can tell what the graph gathered from
+    what this thing made up.
+    """
+
+    prose: str = ""
+
+    def bind_tools(self, tools, **kwargs):
+        bound = super().bind_tools(tools, **kwargs)
+        return bound.model_copy(update={"prose": self.prose})
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        from langchain_core.messages import AIMessage
+        from langchain_core.outputs import ChatGeneration, ChatResult
+
+        if not self.bound_tools:
+            return super()._generate(messages, stop, run_manager, **kwargs)
+        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=self.prose))])
+
+
+def declining_factory(prose: str):
+    def factory(**kwargs):
+        return DecliningModel(
+            attachment=kwargs.get("attachment"),
+            history=kwargs.get("history", ""),
+            prose=prose,
+        )
 
     return factory

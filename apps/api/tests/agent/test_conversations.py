@@ -7,13 +7,23 @@ not the model's prose.
 
 from __future__ import annotations
 
-import pytest
+import uuid
+from datetime import UTC, datetime
 
-from kira.agent.llm import _amount_sen
+import pytest
+from langchain_core.messages import HumanMessage
+
+from kira.agent import prompt
+from kira.agent.llm import OfflineChatModel, _amount_sen, route_for
 from kira.agent.run import run_turn
-from kira.db.models import TXN_CONFIRMED, TXN_DRAFT, Transaction
+from kira.agent.tools import REGISTRY
+from kira.db.models import ROLE_KIRA, ROLE_USER, TXN_CONFIRMED, TXN_DRAFT, Transaction
 from kira.money import Money
+from kira.services import butler_thread
+from kira.services.butler_thread import MessageView
+from kira.services.day_plan import known_kinds
 from tests.agent.conftest import offline_factory
+from tests.conftest import serving
 
 
 async def ask(session, butler, today, text, **kwargs):
@@ -27,6 +37,34 @@ async def ask(session, butler, today, text, **kwargs):
         model_factory=offline_factory,
         **kwargs,
     )
+
+
+async def say(session, butler, today, text, **kwargs):
+    """One turn with the conversation on the thread, the way the API runs it.
+
+    `load_context` reads the history out of `butler_messages` and drops the
+    last row as the one being answered, so `ask` on its own is a turn with no
+    history at all. That is the right default for every test above; it is
+    exactly the wrong one for a follow-up, which has no meaning without it.
+    """
+    user, thread = butler
+    await butler_thread.append(session, user, thread, role=ROLE_USER, content=text)
+    result = await ask(session, butler, today, text, **kwargs)
+    await butler_thread.append(session, user, thread, role=ROLE_KIRA, content=result.answer)
+    return result
+
+
+def tool_call(text: str, tool: str) -> dict:
+    """The arguments one sentence reaches a tool with, before anything runs.
+
+    Bound to the real registry rather than to a list of names, so this is the
+    same call the graph would execute -- what the answer says about it is a
+    separate question, asked separately below.
+    """
+    reply = OfflineChatModel().bind_tools(REGISTRY.schemas()).invoke([HumanMessage(content=text)])
+    calls = {call["name"]: call["args"] for call in reply.tool_calls}
+    assert tool in calls, f"{text!r} reached {sorted(calls)} rather than {tool}"
+    return calls[tool]
 
 
 def labels(result) -> list[str]:
@@ -245,7 +283,7 @@ class TestWhatTheOfflinePlannerDoesWithTheRequest:
         self, session, butler, today, place_world
     ):
         result = await ask(session, butler, today, "Where can I eat somewhere quiet with a view?")
-        assert "I found neither in what you asked" in result.answer
+        assert "I found none of them in what you asked" in result.answer
         assert "nothing in it narrowed this" in result.answer
 
     async def test_a_ceiling_it_was_given_is_not_narrated_as_todays_room(
@@ -266,6 +304,157 @@ class TestWhatTheOfflinePlannerDoesWithTheRequest:
         # this is here to rule out.
         result = await ask(session, butler, today, "Where can I eat somewhere halal nearby?")
         assert f"{place_world.cheap.name} — RM9 " in result.answer
+
+
+class TestAskingTheButlerForOneKindOfFood:
+    """"I want noodles" was unanswerable: nothing in the planner's arguments
+    carried what kind of food it was for, so the reply was the same
+    cheapest-first list with that half of the request dropped out of it."""
+
+    async def test_a_kind_in_the_sentence_narrows_the_list(
+        self, session, butler, today, place_world
+    ):
+        result = await ask(session, butler, today, "Where can I eat noodles nearby?")
+        assert place_world.noodles.name in result.answer
+        # Kopi Kaki is half the price and would lead any unfiltered list.
+        assert place_world.cheap.name not in result.answer
+
+    async def test_it_says_it_read_the_kind(self, session, butler, today, place_world):
+        result = await ask(session, butler, today, "Where can I eat noodles nearby?")
+        assert "I read noodles to eat, and nothing else" in result.answer
+
+    async def test_a_kind_that_is_not_around_here_is_not_blamed_on_the_ceiling(
+        self, session, butler, today, place_world
+    ):
+        # There is no Korean food in the fixed world, and today has RM52.97.
+        # Sending the user at the ceiling here would aim them at a slider that
+        # cannot reach what is actually in the way.
+        result = await ask(session, butler, today, "Where can I eat korean food nearby?")
+        assert "No korean within range of you" in result.answer
+        assert "no ceiling is what is in the way" in result.answer
+        # And it says what is there instead, which is the whole of the answer:
+        # "no Korean" on its own sends them back to a screen they have read.
+        assert "What is around you: cafe from RM9" in result.answer
+
+    async def test_a_ceiling_that_empties_one_kind_does_not_claim_it_emptied_them_all(
+        self, session, butler, today, place_world
+    ):
+        # Omakase Empat is RM50 and the only Japanese place; Kopi Kaki is RM9.
+        # "There are places nearby, but none under RM15" would be false, and
+        # the price that kind starts at is what says how far off RM15 is.
+        result = await ask(session, butler, today, "Where can I eat japanese under RM15?")
+        assert "The japanese places within range start at RM50, over RM15" in result.answer
+        assert "RM15 reaches cafe from RM9" in result.answer
+
+    async def test_a_word_that_is_no_kind_of_food_reads_as_a_kind_of_nothing(
+        self, session, butler, today, place_world
+    ):
+        # "Restaurant" is a kind in the curated data and not one in a sentence,
+        # and "hawker" is not a kind anywhere. Neither may narrow the list.
+        for sentence in ("Where can I eat, any restaurant?", "Where can I eat hawker food?"):
+            result = await ask(session, butler, today, sentence)
+            assert place_world.cheap.name in result.answer, sentence
+
+    async def test_the_ceiling_and_the_kind_are_read_out_of_one_sentence(
+        self, session, butler, today, place_world
+    ):
+        result = await ask(session, butler, today, "Where can I eat halal noodles under RM20?")
+        assert "I read halal only, a ceiling of RM20 and noodles to eat" in result.answer
+        assert place_world.noodles.name in result.answer
+
+    async def test_the_count_of_the_rest_is_the_search_not_the_message(
+        self, session, butler, today, place_world
+    ):
+        # The planner hands over the cheapest dozen of what it found. Thirteen
+        # places are under the ceiling here, so three named and "nine more"
+        # would be a figure about the size of the message rather than about the
+        # neighbourhood — and the user has no way to see which it was.
+        with serving(places=place_world.crowd):
+            result = await ask(session, butler, today, "Where can I eat under RM25?")
+        assert "10 more came in under RM25 as well" in result.answer
+
+
+class TestTheAnswerChoosesInsteadOfEnumerating:
+    """"You have RM52.97 available today, and all five halal options — from
+    RM13.00 to RM14.00 — fit comfortably within that limit" is a true sentence
+    that answers nothing. It named none of the five. The user asked where to
+    eat and was handed a description of the filter, so what these pin is the
+    answer being a choice: one place, named, priced, and with the reason it was
+    the one that was picked."""
+
+    def test_a_craving_reaches_the_planner_carrying_the_kind(self):
+        args = tool_call("I feel like noodles", "build_day_plan")
+        # In the curated set's own spelling, because a word it does not carry
+        # matches nothing and the search would come back empty behind it.
+        assert args["kind"] == "Noodles"
+        assert args["kind"] in known_kinds()
+
+    async def test_that_craving_runs_the_planner_and_names_what_it_found(
+        self, session, butler, today, place_world
+    ):
+        result = await ask(session, butler, today, "I feel like noodles")
+        assert result.tools_used == ["build_day_plan"]
+        assert f"{place_world.noodles.name} — RM18" in result.answer
+
+    async def test_it_names_one_place_and_says_why_that_one(
+        self, session, butler, today, place_world
+    ):
+        result = await ask(session, butler, today, "Where can I eat somewhere halal nearby?")
+        assert f"{place_world.cheap.name} — RM9 for the whole outing" in result.answer
+        # The reason, which is the half a list leaves out. Offline the only
+        # thing that can be weighed is the price order, and it says so.
+        assert "the cheapest of the 5 that came in under RM52.97" in result.answer
+        assert "17% of today's room" in result.answer
+
+    async def test_a_ceiling_that_rules_out_whole_kinds_says_which_and_from_what(
+        self, session, butler, today, place_world
+    ):
+        # RM15 reaches the cafe and the mamak. The chinese, noodles, western and
+        # japanese places all start above it, and the cheapest of those is RM16
+        # -- which is the figure that says how close the ceiling came.
+        result = await ask(session, butler, today, "Where can I eat under RM15?")
+        assert f"{place_world.cheap.name} — RM9" in result.answer
+        assert (
+            "RM15 will not reach 4 other kinds of food around you, which start at RM16"
+            in result.answer
+        )
+
+    async def test_a_ceiling_nothing_reaches_names_the_nearest_place_and_its_price(
+        self, session, butler, today, place_world
+    ):
+        # RM5 buys nothing in the fixed world. "Nothing found" leaves the user
+        # with no move to make, and the search already knows the cheapest thing
+        # around is Kopi Kaki at RM9 -- so the answer is a name and a price, and
+        # in the same breath how far over the ceiling it is.
+        result = await ask(session, butler, today, "Where can I eat for under RM5?")
+        assert "There are places nearby, but none under RM5." in result.answer
+        assert (
+            f"The closest I can get you is {place_world.cheap.name} at RM9, RM4 over RM5."
+            in result.answer
+        )
+        # Named as over rather than offered as though it fitted, and the ceiling
+        # it could not meet is still not narrated as their day.
+        assert "today itself has room for RM52.97" in result.answer
+        # The panel backs the name the sentence used, and labels it as what it
+        # is: nothing here may read as a place that came in under the ceiling.
+        rows = dict(result.evidence)
+        assert rows["Closest above the ceiling"] == f"{place_world.cheap.name} at RM9.00"
+        assert rows["Over the ceiling by"] == "RM4.00"
+
+    async def test_the_kinds_the_money_does_reach_stand_beside_the_nearest_place(
+        self, session, butler, today, place_world
+    ):
+        # A kind filter is what empties this list, not the money: RM20 reaches
+        # the cafe, the mamak and the chinese place, and no japanese under RM50.
+        # Both facts are worth saying, and they are different facts.
+        result = await ask(session, butler, today, "Where can I eat japanese under RM20?")
+        assert (
+            f"The closest I can get you is {place_world.pricey.name} at RM50, RM30 over RM20."
+            in result.answer
+        )
+        assert "RM20 reaches cafe from RM9, mamak from RM12.50 and chinese from RM16." in (
+            result.answer
+        )
 
 
 class TestReadingAnAmountOutOfASentence:
@@ -306,3 +495,135 @@ class TestReadingAnAmountOutOfASentence:
         result = await ask(session, butler, today, "Where can I eat under RM1,500?")
         assert "a ceiling of RM1,500" in result.answer
         assert place_world.cheap.name in result.answer
+
+
+class TestHowPeopleActuallyAskForFood:
+    """The offline model is what the demo runs on, so the route has to catch
+    the phrasings a person uses rather than the one the tests were written in.
+    """
+
+    async def test_a_craving_with_words_in_the_way_still_reaches_the_planner(
+        self, session, butler, today
+    ):
+        # "i want eat fried chicken" puts two words between the wanting and the
+        # food, and named a dish rather than the data's heading for it. It was
+        # answered with today's balance.
+        result = await ask(session, butler, today, "i want eat fried chicken")
+        assert result.tools_used == ["build_day_plan"]
+
+    async def test_halal_alone_is_a_question_about_food(self, session, butler, today):
+        result = await ask(session, butler, today, "somewhere halal under RM15")
+        assert result.tools_used == ["build_day_plan"]
+
+    async def test_wanting_something_that_is_not_food_is_left_alone(
+        self, session, butler, today
+    ):
+        # The craving trigger must land on a real kind word, or "I want" turns
+        # every sentence into a request for lunch.
+        result = await ask(session, butler, today, "I want to save more for the wedding")
+        assert "build_day_plan" not in result.tools_used
+
+
+def rendered(*turns: str) -> str:
+    """A conversation as the system prompt renders it, user turns only.
+
+    Built through `prompt.history_block` rather than typed out, so the one test
+    below that reads the classifier directly is reading the real format and not
+    a copy of it that could drift.
+    """
+    return prompt.history_block(
+        tuple(
+            MessageView(
+                id=uuid.uuid4(),
+                role=ROLE_USER,
+                content=turn,
+                evidence=(),
+                attachment=None,
+                created_at=datetime.now(UTC),
+            )
+            for turn in turns
+        )
+    )
+
+
+class TestAFollowUpThatNamesOnlyAKindOfFood:
+    """"I feel like japanese" reached the planner and "what about japanese
+    instead" reached today's balance, which is the same request twice with the
+    second one answered as small talk.
+
+    A bare kind word carries no verb, no place and no money, so nothing in the
+    sentence itself says it is about food. What says so is the turn before it.
+    These pin both halves of that: the follow-up read as food when the
+    conversation was already about food, and the same words left alone when it
+    was not.
+    """
+
+    def test_the_classifier_reads_it_as_places_and_carries_the_kind(self):
+        text = "what about japanese instead"
+        cold = route_for(text)
+        warm = route_for(text, None, rendered("Where can I eat nearby?"))
+        assert cold.name == "snapshot"
+        assert warm.name == "places"
+        # In the curated set's own spelling, because a word the data does not
+        # carry matches nothing and the search comes back empty behind it.
+        assert warm.arguments(text, None)["build_day_plan"]["kind"] == "Japanese"
+
+    async def test_it_searches_for_the_food_it_named(
+        self, session, butler, today, place_world
+    ):
+        await say(session, butler, today, "Where can I eat nearby?")
+        result = await say(session, butler, today, "what about japanese instead")
+        assert result.tools_used == ["build_day_plan"]
+        # Omakase Empat is the only Japanese place in the fixed world, and at
+        # RM50 it is the one an unfiltered list would never lead with.
+        assert f"{place_world.pricey.name} — RM50" in result.answer
+        assert "I read japanese to eat, and nothing else" in result.answer
+
+    async def test_a_kind_with_nothing_behind_it_is_still_answered_as_food(
+        self, session, butler, today, place_world
+    ):
+        await say(session, butler, today, "Where can I eat nearby?")
+        result = await say(session, butler, today, "korean then")
+        assert result.tools_used == ["build_day_plan"]
+        # There is no Korean food in the fixed world, and saying so is a real
+        # answer. Today's balance is not.
+        assert "No korean within range of you" in result.answer
+
+    @pytest.mark.parametrize("text", ["what about japanese instead", "korean then"])
+    async def test_the_same_words_cold_are_not_about_food(
+        self, session, butler, today, place_world, text
+    ):
+        result = await say(session, butler, today, text)
+        assert "build_day_plan" not in result.tools_used
+
+    async def test_a_turn_about_something_else_ends_the_run(
+        self, session, butler, today, place_world
+    ):
+        # The context is the turn before, not a mood the thread is stuck in.
+        await say(session, butler, today, "Where can I eat nearby?")
+        await say(session, butler, today, "What bills are due?")
+        result = await say(session, butler, today, "korean then")
+        assert "build_day_plan" not in result.tools_used
+
+    async def test_a_run_of_follow_ups_keeps_its_footing(
+        self, session, butler, today, place_world
+    ):
+        # Only the first of these three says in words that it is about food, so
+        # by the third the context has to have been carried rather than reread.
+        await say(session, butler, today, "I feel like japanese")
+        await say(session, butler, today, "or korean")
+        result = await say(session, butler, today, "noodles then")
+        assert result.tools_used == ["build_day_plan"]
+        assert f"{place_world.noodles.name} — RM18" in result.answer
+
+    async def test_a_kind_word_inside_a_sentence_about_something_else_is_not_food(
+        self, session, butler, today, place_world
+    ):
+        # The sentence this rule exists to keep its hands off. "Japanese" is in
+        # it, and it is about a holiday: read as a craving it would reach the
+        # planner, and places is tried before goals, so it would get there.
+        cold = await say(session, butler, today, "I want to save for a japanese trip")
+        assert "build_day_plan" not in cold.tools_used
+        await say(session, butler, today, "Where can I eat nearby?")
+        warm = await say(session, butler, today, "I want to save for a japanese trip")
+        assert "build_day_plan" not in warm.tools_used

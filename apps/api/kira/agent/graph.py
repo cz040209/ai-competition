@@ -2,14 +2,18 @@
 
     START
       → load_context
-      → agent  ⇄  guard  →  tools       (reads; back to agent)
-                  guard  →  approval    (writes; interrupt())
+      → agent → insist  ⇄  guard  →  tools       (reads; back to agent)
+                           guard  →  approval    (writes; interrupt())
       → compose
       → extract_memory
       → END
 
 The shape is the argument. Reads loop freely, writes leave the loop, and the
 only path from a write tool to the database runs through a user's decision.
+
+`insist` is the one place a tool call is made by the app rather than proposed
+by the model, and it is deliberately upstream of the guard: a call this app
+adds is checked exactly as hard as one the model asked for.
 """
 
 from __future__ import annotations
@@ -27,6 +31,7 @@ from kira.agent.nodes.compose import compose
 from kira.agent.nodes.context import load_context
 from kira.agent.nodes.execute import tools
 from kira.agent.nodes.guard import guard, route_after_guard, route_after_tools
+from kira.agent.nodes.insist import insist
 from kira.agent.nodes.memory import extract_memory
 from kira.agent.nodes.reason import agent
 from kira.agent.state import ButlerContext, ButlerState
@@ -37,6 +42,7 @@ def build_graph(checkpointer: BaseCheckpointSaver | None = None):
 
     builder.add_node("load_context", load_context)
     builder.add_node("agent", agent)
+    builder.add_node("insist", insist)
     builder.add_node("guard", guard)
     builder.add_node("tools", tools)
     builder.add_node("approval", approval)
@@ -45,7 +51,8 @@ def build_graph(checkpointer: BaseCheckpointSaver | None = None):
 
     builder.add_edge(START, "load_context")
     builder.add_edge("load_context", "agent")
-    builder.add_edge("agent", "guard")
+    builder.add_edge("agent", "insist")
+    builder.add_edge("insist", "guard")
     builder.add_conditional_edges(
         "guard",
         route_after_guard,

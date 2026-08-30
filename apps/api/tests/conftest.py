@@ -91,12 +91,22 @@ def _north(km: float) -> float:
 
 @dataclass(frozen=True, slots=True)
 class PlaceWorld:
-    """Five places with round prices at known distances, and the origins to
+    """Seven places with round prices at known distances, and the origins to
     search them from. Each origin is a dict so it can be splatted straight into
     ``find_places``, the endpoint's query params, or ``PlanArgs``.
+
+    Seven kinds of food across them, deliberately: two cafes, so a kind filter
+    can return more than one place and a price landscape can count them; one
+    kind spelled as a plural (``Noodles``), so a search for "noodle" has
+    something to be forgiving about; and the rest one apiece.
+
+    ``crowd`` is a separate, larger world for the one question the seven cannot
+    answer: what a caller does when there are more places than it means to hand
+    back. Nothing else uses it, so the seven stay small enough to reason about.
     """
 
     places: tuple[Place, ...]
+    crowd: tuple[Place, ...]
     origin: dict[str, float]
     out_of_range: dict[str, float]
     lone_non_halal: dict[str, float]
@@ -105,6 +115,8 @@ class PlaceWorld:
     near_non_halal: Place
     pricey: Place
     far_non_halal: Place
+    noodles: Place
+    second_cafe: Place
 
 
 _CHEAP = Place(
@@ -152,7 +164,7 @@ _PRICEY = Place(
     Money(5000),
     "low",
     True,
-    "2 km away, and the most expensive of the five.",
+    "2 km away, and the most expensive of the seven.",
     address="4 Jalan Empat, Kuala Lumpur",
 )
 _FAR_NON_HALAL = Place(
@@ -168,13 +180,66 @@ _FAR_NON_HALAL = Place(
     address="5 Jalan Lima, Kuala Lumpur",
 )
 
+_NOODLES = Place(
+    "w6",
+    "Mee Enam",
+    # The one plural kind in the world. A search for "noodle" has to reach it,
+    # and a search for "noodles" has to reach it too.
+    "Noodles",
+    _north(0.8),
+    _ORIGIN_LNG,
+    Money(1800),
+    "high",
+    True,
+    "800 m away.",
+    address="6 Jalan Enam, Kuala Lumpur",
+)
+_SECOND_CAFE = Place(
+    "w7",
+    "Kopi Tujuh",
+    # The same kind as Kopi Kaki, so a kind filter can return two places and a
+    # landscape row can count more than one.
+    "Cafe",
+    _north(1.2),
+    _ORIGIN_LNG,
+    Money(1900),
+    "medium",
+    True,
+    "1.2 km away, and the dearer of the two cafes.",
+    address="7 Jalan Tujuh, Kuala Lumpur",
+)
+
+# Thirteen halal places at one price each, a ringgit apart, close enough to the
+# origin that walking is free — so the whole outing is the meal and the order is
+# the price order, with no arithmetic in the way. Thirteen because the tool
+# hands back twelve: a world of exactly the cap could not tell a list that was
+# capped from one that simply ended.
+_CROWD: tuple[Place, ...] = tuple(
+    Place(
+        f"c{index}",
+        f"Warung {index:02d}",
+        # Cycled so the landscape has several rows to sort, and so the cheapest
+        # of a kind is not always the first place of it.
+        ("Malaysian", "Noodles", "Cafe", "Indian")[index % 4],
+        _north(0.05 + index / 100),
+        _ORIGIN_LNG,
+        Money(1000 + index * 100),
+        "high",
+        True,
+        f"Number {index} of the crowd.",
+        address=f"{index} Jalan Ramai, Kuala Lumpur",
+    )
+    for index in range(1, 14)
+)
+
 PLACE_WORLD = PlaceWorld(
-    places=(_CHEAP, _MID, _NEAR_NON_HALAL, _PRICEY, _FAR_NON_HALAL),
+    places=(_CHEAP, _MID, _NEAR_NON_HALAL, _PRICEY, _FAR_NON_HALAL, _NOODLES, _SECOND_CAFE),
+    crowd=_CROWD,
     origin={"lat": _ORIGIN_LAT, "lng": _ORIGIN_LNG},
-    # George Town, Penang: ~294 km from all five.
+    # George Town, Penang: ~294 km from all seven.
     out_of_range={"lat": 5.4141, "lng": 100.3288},
     # 4.9 km further south than Chophouse Lima, which puts that one place inside
-    # the 5 km radius and the other four well outside it. It is not halal, so
+    # the 5 km radius and the other six well outside it. It is not halal, so
     # the halal toggle is the only thing that can empty a search from here.
     lone_non_halal={"lat": _north(-8.9), "lng": _ORIGIN_LNG},
     cheap=_CHEAP,
@@ -182,6 +247,8 @@ PLACE_WORLD = PlaceWorld(
     near_non_halal=_NEAR_NON_HALAL,
     pricey=_PRICEY,
     far_non_halal=_FAR_NON_HALAL,
+    noodles=_NOODLES,
+    second_cafe=_SECOND_CAFE,
 )
 
 

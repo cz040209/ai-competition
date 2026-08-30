@@ -6,12 +6,15 @@ much of today's safe-to-spend each outing would use.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import re
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass, replace
 from datetime import date
 from typing import Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from kira.adapters.fakes import KL_PLACES
 from kira.adapters.geo import haversine_km
 from kira.adapters.protocols import Place
 from kira.adapters.registry import get_adapters
@@ -26,6 +29,73 @@ Band = Literal["ok", "tight", "over"]
 # destinations and fail on others, and a single flag for the list would have to
 # lie about half of it.
 DistanceBasis = Literal["road", "straight_line"]
+
+
+# ── What kind of food ─────────────────────────────────────────────────────────
+
+
+def kind_key(value: str) -> str:
+    """The form two kind words are compared in.
+
+    Forgiving in exactly one direction: the user's spelling is allowed to
+    differ from the data's by case and by a plural ending, so "noodle" and
+    "noodles" both reach ``Noodles`` and "japanese" reaches ``Japanese``.
+    Nothing else is forgiven. A prefix rule would have "chi" reaching both
+    Chicken and Chinese, and a substring rule would have "tea" reaching
+    Steakhouse -- both of which answer a question the user did not ask.
+    """
+    folded = " ".join(value.split()).casefold()
+    return folded[:-1] if folded.endswith("s") else folded
+
+
+def known_kinds() -> tuple[str, ...]:
+    """Every kind of food the curated set actually carries, alphabetically.
+
+    Derived from the loaded data rather than written down beside it. The set is
+    regenerated from OpenStreetMap (scripts/fetch-kl-places.py), and a
+    hand-kept list would go on offering a word the data no longer has -- a
+    filter that matches nothing, for a reason nobody reading the code can see.
+
+    This is the vocabulary offered to a model and checked against what a
+    sentence was read as. It is deliberately not what ``find_places`` filters
+    on: that matches against the kinds of the places actually in range, so a
+    search stays correct under a maps adapter that is not this one.
+    """
+    return _KL_KINDS
+
+
+def resolve_kind(value: str) -> str | None:
+    """The curated set's own spelling of a kind word, or None if it has none.
+
+    None is the answer to "hawker" and to "something nice": both are words the
+    data has no column for, and treating either as a filter would empty a list
+    for a reason the user cannot act on.
+
+    A whole phrase is allowed to carry the word: "fried chicken" reaches
+    ``Chicken`` and "middle eastern food" reaches ``Middle Eastern``, because
+    people name food the way they eat it rather than the way a column is
+    headed. The match is still whole-word against the data's own vocabulary, so
+    the rules above hold -- "hawker" and "something nice" carry no kind word and
+    still resolve to nothing, and "tea" still does not reach Steakhouse.
+    """
+    exact = _KL_KINDS_BY_KEY.get(kind_key(value))
+    if exact is not None:
+        return exact
+    # Longest first, so "middle eastern food" is not read as merely "eastern"
+    # were a one-word kind ever to overlap a two-word one.
+    folded = f" {' '.join(value.split()).casefold()} "
+    for key, kind in sorted(_KL_KINDS_BY_KEY.items(), key=lambda kv: -len(kv[0])):
+        if re.search(rf"(?<!\w){re.escape(key)}s?(?!\w)", folded):
+            return kind
+    return None
+
+
+# Built once, off the shipped file. Two spellings of one key would leave the
+# alphabetically last standing here, which is arbitrary and harmless: the
+# filter itself compares keys, so both spellings match either way, and only the
+# word offered to a model would be the other one.
+_KL_KINDS: tuple[str, ...] = tuple(sorted({place.kind for place in KL_PLACES}))
+_KL_KINDS_BY_KEY: dict[str, str] = {kind_key(kind): kind for kind in _KL_KINDS}
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +142,37 @@ class EvaluatedPlace:
     confidence: str
     halal: bool
     note: str
+
+
+@dataclass(frozen=True, slots=True)
+class KindPrice:
+    """One row of the price landscape: what a kind of food costs from here.
+
+    ``cheapest_total_sen`` is a whole outing -- meal and travel together -- so
+    it is the same figure the places themselves carry, and a ceiling can be
+    held against it directly.
+    """
+
+    kind: str
+    count: int
+    cheapest_total_sen: int
+
+
+def price_landscape(evaluated: Iterable[EvaluatedPlace]) -> tuple[KindPrice, ...]:
+    """What each kind of food within range costs, cheapest kind first.
+
+    Grouped on ``kind_key`` rather than on the raw word, so that one row
+    answers for one filter: whatever a kind filter would match, exactly one row
+    here describes.
+    """
+    by_key: dict[str, list[EvaluatedPlace]] = {}
+    for place in evaluated:
+        by_key.setdefault(kind_key(place.kind), []).append(place)
+    rows = []
+    for group in by_key.values():
+        cheapest = min(group, key=lambda place: place.total_sen)
+        rows.append(KindPrice(cheapest.kind, len(group), cheapest.total_sen))
+    return tuple(sorted(rows, key=lambda row: (row.cheapest_total_sen, row.kind)))
 
 
 def evaluate_place(
@@ -139,25 +240,77 @@ def evaluate_place(
 class PlacesFound:
     """What the maps adapter had, and what survived each filter in turn.
 
-    An empty ``places`` has three unrelated causes and the caller must not have
+    An empty ``places`` has four unrelated causes and the caller must not have
     to guess between them, so each filter states what it left behind:
 
     * ``nearby_count`` is what the radius held. Nil means distance is the cause,
       and no ceiling and no toggle will close it.
     * ``matching_count`` is what was still standing after the halal filter, and
-      before the ceiling ran. Nil against a non-nil ``nearby_count`` means the
-      halal toggle is the cause -- raising the ceiling would do nothing, and
-      telling the user to raise it sends them at a slider that cannot help.
+      before the kind filter and the ceiling ran. Nil against a non-nil
+      ``nearby_count`` means the halal toggle is the cause -- raising the
+      ceiling would do nothing, and telling the user to raise it sends them at
+      a slider that cannot help.
+    * ``kind_count`` is what was still standing after the food-type filter, and
+      equals ``matching_count`` when no kind was asked for. Nil against a
+      non-nil ``matching_count`` means there is nothing of that kind around
+      here at all -- again not a ceiling, and not a distance either, since
+      other food is in range.
     * anything left after that, with ``places`` still empty, is the ceiling:
       the one cause the user can actually drag away.
 
-    The counts nest -- ``nearby_count >= matching_count >= len(places)`` -- so
-    the first of them that is nil is the cause.
+    The counts nest -- ``nearby_count >= matching_count >= kind_count >=
+    len(places)`` -- so the first of them that is nil is the cause.
+
+    ``landscape`` is the whole price picture behind ``places``: every kind of
+    food in range, how many of each, and the cheapest outing among them. See
+    ``find_places`` for what it deliberately does and does not narrow by.
+
+    ``nearest_over_cap`` is the answer to the one empty list the user can do
+    nothing with: a ceiling of RM10 where the cheapest thing around is RM11.50.
+    "Nothing under RM10" is true and useless -- the person still has to eat, and
+    the search already knows what the nearest thing costs. So the cheapest few
+    of what the ceiling turned away come back here, and only here: never folded
+    into ``places``, because a widened ceiling nobody asked for is the same lie
+    as a dropped "halal". Every other filter still holds -- these are halal if
+    halal was asked for, and the kind that was asked for -- so the only thing
+    relaxed is the one figure the user can see and drag.
+
+    It is populated on a completely empty ``places`` and never on a thin one.
+    Empty-only is a rule a person can hold in their head, and it keeps "the
+    ceiling is being respected" something they can go on trusting.
     """
 
     places: tuple[EvaluatedPlace, ...]
     nearby_count: int
     matching_count: int
+    kind_count: int
+    landscape: tuple[KindPrice, ...]
+    nearest_over_cap: tuple[EvaluatedPlace, ...] = ()
+
+
+# How many of the turned-away places are offered back when the ceiling admitted
+# nothing at all. One would read as the answer rather than as the cheapest thing
+# that did not fit; a full dozen would read as the ceiling having been widened.
+NEAREST_OVER_CAP = 3
+
+
+def _nearest_over_cap(turned_away: Sequence[EvaluatedPlace]) -> tuple[EvaluatedPlace, ...]:
+    """The cheapest few of what the ceiling excluded, each banded ``over``.
+
+    The band is set rather than left as evaluated, and that is the honest
+    reading rather than a cosmetic one. ``band`` is what every client already
+    renders as "this does not fit what you asked for", and not fitting is the
+    entire reason these places are here: each one is above the ceiling this
+    search was run under. Left alone, a place under a hand-dragged ceiling but
+    well inside today's room would come back ``ok`` and could be drawn exactly
+    like a place that fitted -- which is the one thing this group must never
+    look like.
+
+    ``share`` is untouched, because that is a real ratio against a real room and
+    nothing here has changed it.
+    """
+    nearest = sorted(turned_away, key=lambda place: place.total_sen)[:NEAREST_OVER_CAP]
+    return tuple(replace(place, band="over") for place in nearest)
 
 
 async def find_places(
@@ -169,14 +322,26 @@ async def find_places(
     cap_sen: int,
     room_sen: int,
     radius_km: float = 5.0,
+    kind: str | None = None,
 ) -> PlacesFound:
     """cap_sen filters what is shown; room_sen (today's safe-to-spend) drives
     share/band and must never be swapped with cap_sen.
 
+    ``kind`` narrows to one sort of food, matched against the kinds of the
+    places actually in range -- not against the shipped vocabulary, so a search
+    stays correct under a maps adapter that is not the curated one. A word
+    nothing matches returns nothing. It never widens back out to the whole
+    list: an unmatched filter answered with everything is the same lie as a
+    dropped "halal", and ``kind_count`` is there to say which filter it was.
+
     The order below is load-bearing. Routing happens after the radius and the
-    halal filter and before the ceiling, because it is the only step that costs
-    a network call and the only step whose answer changes what the ceiling is
-    judging.
+    halal filter and before the kind filter and the ceiling, because it is the
+    only step that costs a network call and the only step whose answer changes
+    what the ceiling is judging. It stays ahead of the kind filter -- one
+    request either way, the same one it was before this filter existed -- so
+    that the landscape below is priced on the same roads the list is. A
+    landscape built on straight lines under a list built on roads would be two
+    prices for the same outing.
     """
     adapters = get_adapters()
     # The radius is measured in a straight line, and that is correct as a
@@ -207,15 +372,48 @@ async def find_places(
         evaluate_place(place, lat, lng, mode, room_sen, road_metres=metres)
         for place, metres in zip(matching, routed, strict=True)
     ]
+
+    # The landscape is built here, before the kind filter and before the
+    # ceiling, and both omissions are deliberate.
+    #
+    # It ignores the ceiling because its whole job is to say what the ceiling
+    # ruled out. A landscape computed after the cap could only ever list what
+    # the user can already see, and "the Japanese places start at RM42, which
+    # is past today's room anyway" would be unsayable -- those rows would be
+    # exactly the ones missing.
+    #
+    # It ignores the kind filter for the same reason one step out: when the
+    # answer to "I want noodles" is that there are none, the useful reply is
+    # what is there instead, and a landscape narrowed to noodles would be empty
+    # beside an empty list.
+    #
+    # It does honour the halal filter, because that is not a ceiling to argue
+    # with -- it is the user saying what they eat, and offering them the cheap
+    # pork noodles they excluded is not information they asked for.
+    landscape = price_landscape(evaluated)
+
+    # Blank is nobody asking for a kind. A word that is not blank and matches
+    # nothing is a different thing entirely, and comes back empty below.
+    wanted = kind_key(kind) if kind and kind.strip() else None
+    of_kind = (
+        evaluated if wanted is None else [p for p in evaluated if kind_key(p.kind) == wanted]
+    )
+
     # The ceiling runs last, on the total the road produced. Applying it to a
     # straight-line total would admit places the user cannot actually afford --
     # the 3.7 km that is really 8.1 km of driving is RM12.05 of fare under a
     # ceiling it clears and RM20.39 in the car it does not.
-    under_cap = (p for p in evaluated if p.total_sen <= cap_sen)
+    under_cap = sorted((p for p in of_kind if p.total_sen <= cap_sen), key=lambda p: p.total_sen)
     return PlacesFound(
-        places=tuple(sorted(under_cap, key=lambda p: p.total_sen)),
+        places=tuple(under_cap),
         nearby_count=len(nearby),
         matching_count=len(matching),
+        kind_count=len(of_kind),
+        landscape=landscape,
+        # Only where the ceiling admitted nothing whatever. A thin list is a
+        # list: it has somewhere to go in it, and topping it up from above the
+        # ceiling would be answering a question with a slightly different one.
+        nearest_over_cap=() if under_cap else _nearest_over_cap(of_kind),
     )
 
 

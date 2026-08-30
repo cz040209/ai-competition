@@ -22,6 +22,19 @@ MODULE = "day_plan"
 _KLCC_LAT = 3.1577
 _KLCC_LNG = 101.7120
 
+# Twelve rather than five. Five cheapest was a list the model could not choose
+# from: it saw the bottom of the price order and nothing else, so "the cheapest
+# one" was the only recommendation available to it. Twelve is enough of the
+# range to pick from and still short enough to read.
+PLACES_SHOWN = 12
+
+# Written into the argument description at import, from the data rather than
+# from memory. A model reads this list to decide what to pass, and a word that
+# is not in it matches nothing — so the list has to be the one the places
+# actually carry, not a second copy of it that drifts when the file is
+# regenerated.
+_KINDS = ", ".join(day_plan_service.known_kinds())
+
 
 class PlanArgs(BaseModel):
     lat: float = Field(
@@ -40,6 +53,21 @@ class PlanArgs(BaseModel):
         description=(
             "A display ceiling on total outing cost, in sen. Leave unset to use "
             "today's safe-to-spend."
+        ),
+    )
+    kind: str | None = Field(
+        default=None,
+        max_length=40,
+        description=(
+            "One kind of food, when the user asked for one — 'I want noodles', "
+            "'somewhere Japanese'. Leave unset for everything.\n"
+            f"It must be one of the words the places themselves carry: {_KINDS}. "
+            "Anything else matches nothing and the search comes back empty: it "
+            "is not free text, and the list is never widened back out to cover "
+            "a word that missed. So do not invent a category — 'hawker', "
+            "'healthy' and 'street food' are not in that list. When the user "
+            "wants something the list has no word for, leave this unset rather "
+            "than guessing at the nearest category."
         ),
     )
 
@@ -83,46 +111,77 @@ async def _build(ctx: ToolContext, args: PlanArgs) -> ToolResult:
         halal_only=args.halal_only,
         cap_sen=cap_sen,
         room_sen=room_sen,
+        kind=args.kind,
     )
-    top = found.places[:5]
+    # Sorted by total cost by the service, and handed over in that order: these
+    # are the cheapest twelve, cheapest first, and the model is told as much
+    # below so it does not read the top of the list as a recommendation.
+    top = found.places[:PLACES_SHOWN]
     currency = ctx.currency
 
     def money(sen: int) -> str:
         return money_str(Money(sen, currency))
 
+    def row(place: day_plan_service.EvaluatedPlace) -> dict:
+        return {
+            "id": place.id,
+            "name": place.name,
+            "kind": place.kind,
+            "address": place.address,
+            "km": place.km,
+            # The model is told which distance produced the fare so it
+            # cannot narrate a straight-line estimate as a quoted price.
+            "road_km": place.road_km,
+            "distance_basis": place.distance_basis,
+            "travel_sen": place.travel_sen,
+            "minutes": place.minutes,
+            "total_sen": place.total_sen,
+            "share": place.share,
+            "band": place.band,
+            "confidence": place.confidence,
+            "halal": place.halal,
+            "note": place.note,
+        }
+
     # The room is stated rather than left in the shares: on a day already spent
     # out every share is null, and a model given only those would have nothing
-    # to quote but a figure it made up. The two counts are stated for the same
+    # to quote but a figure it made up. The three counts are stated for the same
     # reason: an empty list otherwise reads as a ceiling problem even when the
-    # user is nowhere near anything the adapter knows, or is standing beside a
-    # place their own halal filter took out.
+    # user is nowhere near anything the adapter knows, is standing beside a
+    # place their own halal filter took out, or asked for a kind of food that
+    # is not around here.
     value = {
         "room_sen": room_sen,
         "cap_sen": cap_sen,
+        "kind": args.kind,
         "nearby_count": found.nearby_count,
         "matching_count": found.matching_count,
-        "places": [
+        "kind_count": found.kind_count,
+        # How many came back against how many there were, so a list that was cut
+        # at twelve is not read as the whole of what the search found.
+        "shown_count": len(top),
+        "total_under_cap": len(found.places),
+        # Every kind in range with the cheapest whole outing of each, ceiling
+        # and kind filter both ignored. This is what lets an empty list be
+        # answered with what the ceiling excluded rather than with an apology:
+        # "RM15 reaches the mamak and the food courts; the Japanese places
+        # start at RM42." Nothing here may be quoted as a place — a row is a
+        # price, and the names are all in ``places``.
+        "price_landscape": [
             {
-                "id": place.id,
-                "name": place.name,
-                "kind": place.kind,
-                "address": place.address,
-                "km": place.km,
-                # The model is told which distance produced the fare so it
-                # cannot narrate a straight-line estimate as a quoted price.
-                "road_km": place.road_km,
-                "distance_basis": place.distance_basis,
-                "travel_sen": place.travel_sen,
-                "minutes": place.minutes,
-                "total_sen": place.total_sen,
-                "share": place.share,
-                "band": place.band,
-                "confidence": place.confidence,
-                "halal": place.halal,
-                "note": place.note,
+                "kind": row.kind,
+                "count": row.count,
+                "cheapest_total_sen": row.cheapest_total_sen,
             }
-            for place in top
+            for row in found.landscape
         ],
+        "places": [row(place) for place in top],
+        # Only ever populated where ``places`` came back empty, and kept out of
+        # ``places`` so that the model cannot read one list where there are two.
+        # Every one of these costs more than ``cap_sen``; they are here because
+        # "nothing under RM10" leaves the user with nowhere to eat and the
+        # search already knows what the nearest thing costs.
+        "nearest_over_cap": [row(place) for place in found.nearest_over_cap],
     }
 
     # Labelled as the dashboard tool labels it, so the two collapse into one row
@@ -159,14 +218,42 @@ async def _build(ctx: ToolContext, args: PlanArgs) -> ToolResult:
                 f"{found.nearby_count} within range, none of them halal",
             ),
         )
-    else:
+    elif found.kind_count == 0:
+        # Only reachable with a kind asked for, and the ceiling is not what did
+        # this: there is other food in range at prices nobody has looked at yet.
         evidence = (
             room_row,
             EvidenceRow(
                 "Nearby places",
-                f"{found.matching_count} within range, none under the ceiling",
+                f"{found.matching_count} within range, none of them {args.kind}",
             ),
         )
+    else:
+        # Counted over the kind that was asked for, not over everything in
+        # range. "7 within range, none under the ceiling" is false where six of
+        # the seven are cheap and simply not Japanese.
+        within = (
+            f"{found.matching_count} within range"
+            if args.kind is None
+            else f"{found.kind_count} {args.kind} within range"
+        )
+        evidence = (
+            room_row,
+            EvidenceRow("Nearby places", f"{within}, none under the ceiling"),
+        )
+        # The panel's job is to back what the answer says, and what the answer
+        # says here is a name and a price. Labelled as the closest above the
+        # ceiling rather than as the cheapest nearby, so a reader skimming the
+        # panel alone cannot take it for something that fitted.
+        if found.nearest_over_cap:
+            closest = found.nearest_over_cap[0]
+            evidence += (
+                EvidenceRow(
+                    "Closest above the ceiling",
+                    f"{closest.name} at {money(closest.total_sen)}",
+                ),
+                EvidenceRow("Over the ceiling by", money(closest.total_sen - cap_sen)),
+            )
 
     return ToolResult(value, evidence)
 
@@ -237,18 +324,50 @@ SPECS = (
         description=(
             "Find nearby curated places and rank them by total outing cost (meal "
             "estimate plus travel) against today's safe-to-spend. Call this for "
-            "'where can I eat', 'what can I afford for lunch nearby', or any question "
-            "about going somewhere near a given location.\n"
-            "A preference the user has had you remember is a reason to set these "
-            "arguments a certain way. 'I don't like walking far' means mode should be "
-            "transit or ride, and that you lead with the shortest journey rather than "
-            "the cheapest total. A preference acts on the arguments you pass and the "
-            "order you read the places back in, and nowhere else — the ranking itself "
-            "is cost against today's room, so the user can always tell why the list "
-            "came out the way it did.\n"
-            "Name the places. A count and a price range — 'five halal options from "
-            "RM13 to RM14' — is not an answer to where to eat: say which ones, using "
-            "the names this tool returned and never a name it did not."
+            "'where can I eat', 'what can I afford for lunch nearby', 'I feel like "
+            "noodles', or any question about going somewhere near a given location.\n"
+            "Recommend one place. The user asked where to go, so the answer is a "
+            "name: say which place it is, what the whole outing costs, and why that "
+            "one. A count and a price range — 'five halal options from RM13 to "
+            "RM14' — is not an answer to where to eat; it is a description of the "
+            "filter. Reading the whole list back is the same failure spread over "
+            "more words. Name one, then two others at most as alternatives, and only "
+            "ever with the names and figures this tool returned.\n"
+            "Why that one is the part worth writing. Weigh it against today's room, "
+            "against a goal the user is saving for, and against anything they have "
+            "had you remember. The places come back cheapest first and only the "
+            "cheapest dozen come back at all, so leading with the first one is "
+            "itself a choice about price: make it on purpose rather than by reading "
+            "down from the top.\n"
+            "A remembered preference acts in two places and nowhere else — on the "
+            "arguments you pass, and on which of the places that come back you "
+            "pick. 'I don't like walking far' means mode should be transit or ride, "
+            "and means the short journey wins over the cheap one; say so when it "
+            "does. The ranking itself stays cost against today's room, so the user "
+            "can always tell why the list came out the way it did.\n"
+            "Once you have recommended one, offer to put it on today: "
+            "add_place_to_today takes that place's id, name and total_sen and leaves "
+            "it waiting as a draft. Offer it in the same breath as the "
+            "recommendation, and call it when the user agrees — 'yes', 'add it', "
+            "'go on'. Nothing is written until they approve the card.\n"
+            "`price_landscape` is every kind of food in range with the cheapest whole "
+            "outing of each, whatever the ceiling and whatever kind was asked for. "
+            "Read it before apologising for an empty list, and say what the money "
+            "does reach in the user's own terms: 'RM15 will not reach the Japanese "
+            "places, which start at RM42, but it covers the mamak from RM11'. Its "
+            "rows are prices, not places — never name a shop out of one.\n"
+            "`nearest_over_cap` appears only when nothing at all came in under the "
+            "ceiling, and it is the closest few places above it. Name the first one "
+            "and say how far over it is: 'nothing under RM10 — the closest is RM11.50 "
+            "at Kopi Kaki'. Never present one as fitting, and never count them among "
+            "the places that did.\n"
+            "Every figure you say is one this tool returned. Reason about them "
+            "freely — compare two totals, call one a third of today's room, say a "
+            "place is the only one under the ceiling — but never author one. A "
+            "price, a place or a distance you supplied yourself reads to the user "
+            "exactly like a measured one, and the panel beside your answer is built "
+            "from the tool's figures alone: an invented number sits there with "
+            "nothing behind it."
         ),
         args_model=PlanArgs,
         handler=_build,
@@ -260,10 +379,10 @@ SPECS = (
         label="Adding a place to today",
         description=(
             "Put one of build_day_plan's places on today as a draft. Call this for "
-            "'add the second one', 'put that down for lunch', or any request to keep "
-            "a place the plan just offered. Pass its id and the same lat/lng the plan "
-            "was built from. It waits in Activity and moves nothing until the user "
-            "confirms it."
+            "'add the second one', 'put that down for lunch', 'yes, that one', or "
+            "any agreement to a place you just recommended. Pass its id and the same "
+            "lat/lng the plan was built from. It waits in Activity and moves nothing "
+            "until the user confirms it."
         ),
         args_model=AddPlaceArgs,
         handler=_add_place,

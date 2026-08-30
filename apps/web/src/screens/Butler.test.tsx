@@ -1,10 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ButlerThread } from "@kira/contracts";
 
+import { handToButler, takeButlerHandoff } from "../lib/butlerHandoff";
 import { Butler } from "./Butler";
 
 const EMPTY_THREAD: ButlerThread = {
@@ -249,5 +250,79 @@ describe("Butler approvals", () => {
       expect(screen.getByText("Rejected. Nothing changed.")).toBeInTheDocument(),
     );
     expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+  });
+});
+
+describe("Butler · a question handed over from another screen", () => {
+  const HANDED = "under RM15, and what's actually good tonight";
+
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(streamed(ANSWER))));
+  });
+
+  afterEach(() => {
+    takeButlerHandoff();
+    vi.unstubAllGlobals();
+  });
+
+  it("asks it word for word, without it being typed again", async () => {
+    handToButler(HANDED);
+
+    setup();
+
+    await waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith(
+        "/v1/butler/messages",
+        expect.objectContaining({ body: JSON.stringify({ text: HANDED, attachment: null }) }),
+      ),
+    );
+    // On screen as the user's own turn, because it is: they wrote it, one tab
+    // ago.
+    expect(screen.getByText(HANDED)).toBeInTheDocument();
+  });
+
+  it("keeps the thread it was given, and puts the question after it", async () => {
+    // The history load replaces the turns wholesale, so a question asked ahead
+    // of it would vanish out of the conversation the moment the thread landed.
+    handToButler(HANDED);
+
+    setup({
+      ...EMPTY_THREAD,
+      messages: [
+        {
+          id: "m0",
+          role: "user",
+          content: "Where do I stand?",
+          evidence: [],
+          attachment: null,
+          created_at: "2026-09-03T04:00:00Z",
+        },
+      ],
+    });
+
+    await waitFor(() => expect(screen.getByText(HANDED)).toBeInTheDocument());
+    expect(screen.getByText("Where do I stand?")).toBeInTheDocument();
+  });
+
+  it("asks it once, however often the tab is opened", async () => {
+    handToButler(HANDED);
+    setup();
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+
+    // Leaving the tab and coming back is a fresh mount over the same slot. A
+    // question that stayed in it would be re-asked here, hours after it was
+    // written and against numbers that have since moved.
+    cleanup();
+    setup();
+
+    await waitFor(() => expect(screen.getByText(/move money/)).toBeInTheDocument());
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks nothing when nothing was handed over", async () => {
+    setup();
+
+    await waitFor(() => expect(screen.getByText(/move money/)).toBeInTheDocument());
+    expect(fetch).not.toHaveBeenCalled();
   });
 });
