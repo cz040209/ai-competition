@@ -24,6 +24,7 @@ from kira.agent.goal_graph.nodes import (
     goal_policy_guard,
     load_financial_snapshot,
     reconcile_short_term_cashflow,
+    resolve_goal_target,
     route_after_apply,
     route_after_approval,
     route_after_compose,
@@ -32,6 +33,7 @@ from kira.agent.goal_graph.nodes import (
     route_after_intake,
     route_after_quality,
     route_after_reconciliation,
+    route_after_resolve,
     route_after_scenarios,
     solve_goal_baseline,
 )
@@ -63,6 +65,7 @@ def checkpoint_serializer() -> JsonPlusSerializer:
 def build_goal_graph(checkpointer: BaseCheckpointSaver | None = None):
     builder = StateGraph(GoalGraphState, context_schema=GoalGraphContext)
     builder.add_node("goal_intake", goal_intake)
+    builder.add_node("resolve_goal_target", resolve_goal_target)
     builder.add_node("goal_policy_guard", goal_policy_guard)
     builder.add_node("load_financial_snapshot", load_financial_snapshot)
     builder.add_node("goal_data_quality_gate", goal_data_quality_gate)
@@ -81,6 +84,11 @@ def build_goal_graph(checkpointer: BaseCheckpointSaver | None = None):
     builder.add_conditional_edges(
         "goal_intake",
         route_after_intake,
+        {"clarify": "clarification_response", "resolve": "resolve_goal_target"},
+    )
+    builder.add_conditional_edges(
+        "resolve_goal_target",
+        route_after_resolve,
         {"clarify": "clarification_response", "guard": "goal_policy_guard"},
     )
     builder.add_conditional_edges(

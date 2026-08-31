@@ -43,7 +43,7 @@ async def guard(state: ButlerState, runtime: Runtime[ButlerContext]) -> dict:
     reply = _last_ai(state)
     calls = list(getattr(reply, "tool_calls", None) or [])
     if not calls:
-        return {"approved_reads": [], "pending_write": None}
+        return {"approved_reads": [], "pending_write": None, "pending_workflow": None}
 
     context = runtime.context
     settings = get_settings()
@@ -59,6 +59,7 @@ async def guard(state: ButlerState, runtime: Runtime[ButlerContext]) -> dict:
 
     reads: list[dict[str, Any]] = []
     write: dict[str, Any] | None = None
+    workflow: dict[str, Any] | None = None
     refusals: list[str] = []
     responses: list[ToolMessage] = []
 
@@ -94,10 +95,17 @@ async def guard(state: ButlerState, runtime: Runtime[ButlerContext]) -> dict:
             "name": name,
             "args": args.model_dump(mode="json"),
         }
-        if spec.is_write:
+        if spec.is_workflow:
+            if workflow is None and write is None:
+                workflow = permitted
+            else:
+                reason = "One financial workflow at a time."
+                refusals.append(reason)
+                responses.append(_refusal(call, reason))
+        elif spec.is_write:
             # Only the first write is ever proposed: an approval card asks about
             # one change, and the user answering it is the point.
-            if write is None:
+            if write is None and workflow is None:
                 write = permitted
             else:
                 reason = "One change at a time. Ask me again once this one is decided."
@@ -107,14 +115,19 @@ async def guard(state: ButlerState, runtime: Runtime[ButlerContext]) -> dict:
             reads.append(permitted)
 
     return {
-        "approved_reads": reads,
+        # A specialised workflow loads its own confirmed snapshot. Running
+        # unrelated reads first would add a model/tool loop and duplicate facts.
+        "approved_reads": [] if workflow else reads,
         "pending_write": write,
+        "pending_workflow": workflow,
         "refusals": refusals,
         "messages": responses,
     }
 
 
 def route_after_guard(state: ButlerState) -> str:
+    if state.get("pending_workflow"):
+        return "workflow"
     if state.get("approved_reads"):
         return "tools"
     if state.get("pending_write"):
@@ -123,6 +136,8 @@ def route_after_guard(state: ButlerState) -> str:
 
 
 def route_after_tools(state: ButlerState) -> str:
+    if state.get("pending_workflow"):
+        return "workflow"
     if state.get("pending_write"):
         return "approval"
     return "agent"

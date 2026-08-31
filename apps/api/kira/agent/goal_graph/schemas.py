@@ -10,6 +10,19 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 GoalAction = Literal["create", "replan", "impact", "select_scenario", "recalculate"]
+GoalType = Literal[
+    "emergency_starter_fund",
+    "upcoming_bill_annual_expense",
+    "travel",
+    "big_purchase",
+    "wedding_event_deposit",
+    "house_down_payment",
+    "car_down_payment",
+    "wedding_fund",
+    "full_emergency_fund",
+    "education_family_goal",
+    "custom_goal",
+]
 
 
 class GoalIntent(BaseModel):
@@ -17,11 +30,13 @@ class GoalIntent(BaseModel):
 
     action: GoalAction = "create"
     goal_id: uuid.UUID | None = None
-    goal_type: str | None = None
+    goal_reference: str | None = Field(default=None, max_length=80)
+    goal_type: GoalType | None = None
     name: str | None = Field(default=None, max_length=80)
     target_amount_sen: int | None = Field(default=None, strict=True, gt=0)
     current_saved_sen: int | None = Field(default=None, strict=True, ge=0)
     target_date: date | None = None
+    contribution_per_payday_sen: int | None = Field(default=None, strict=True, gt=0)
     priority: Literal["protected", "important", "flexible"] | None = None
     funding_account_ids: list[uuid.UUID] = Field(default_factory=list)
     proposed_spend_sen: int | None = Field(default=None, strict=True, ge=0)

@@ -179,11 +179,13 @@ class GoalGraphIntentRequest(BaseModel):
 
     action: Literal["create", "replan", "impact", "select_scenario", "recalculate"]
     goal_id: uuid.UUID | None = None
+    goal_reference: str | None = Field(default=None, max_length=80)
     goal_type: GoalType | None = None
     name: str | None = Field(default=None, min_length=1, max_length=80)
     target_amount_sen: int | None = Field(default=None, strict=True, gt=0)
     current_saved_sen: int | None = Field(default=None, strict=True, ge=0)
     target_date: date | None = None
+    contribution_per_payday_sen: int | None = Field(default=None, strict=True, gt=0)
     priority: GoalPriority | None = None
     funding_account_ids: list[uuid.UUID] = Field(default_factory=list)
     proposed_spend_sen: int | None = Field(default=None, strict=True, ge=0)

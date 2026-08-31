@@ -3,7 +3,7 @@
 This package implements the Goal workflow around the deterministic finance
 engine. Its trust boundary is deliberately simple:
 
-1. a chat model interprets natural language into `GoalIntent`;
+1. the Butler's chat-model call interprets natural language into `GoalIntent`;
 2. explicit LangGraph nodes call deterministic Python services;
 3. a chat model explains the immutable result without supplying numbers.
 
@@ -15,7 +15,7 @@ owns every financial value and decision.
 ## Graph
 
 ```text
-START -> intake -> policy -> snapshot -> quality -> solve -> reconcile
+START -> intake -> resolve target -> policy -> snapshot -> quality -> solve -> reconcile
       -> [impact] -> [scenarios] -> compose
       -> [draft -> interrupt -> apply] -> audit -> END
 ```
@@ -63,12 +63,21 @@ Existing plan versions are never overwritten.
 
 ## Entry points
 
+- `POST /v1/butler/messages` is the normal conversational entry point. The
+  Butler exposes `start_goal_planning` as a typed workflow boundary, validates
+  the intent, and enters this subgraph. It bypasses the ordinary Butler
+  composer because this graph already made the second and final model call.
 - `POST /v1/goals/runs` starts a natural-language run, or accepts a typed
   `intent` for form/event-driven flows.
 - `POST /v1/butler/approvals/{approval_id}/respond` resumes both ordinary
   Butler approvals and Goal-plan approvals, routing each to its owning graph.
 - `run_goal_request()` and `resume_goal_run()` provide the same boundary for
-  internal transaction-triggered recalculation.
+internal transaction-triggered recalculation.
+
+The subgraph stays in `agent/goal_graph` because it has its own typed state,
+conditional routes, checkpoint, and approval lifecycle. Its Butler-facing
+bridge is `agent/nodes/goal.py`, alongside the other nodes in the main graph;
+it is part of the same runtime rather than a second chatbot.
 
 Run the focused tests from `apps/api`:
 

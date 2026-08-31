@@ -2,9 +2,10 @@
 
     START
       → load_context
-      → agent → insist  ⇄  guard  →  tools       (reads; back to agent)
-                           guard  →  approval    (writes; interrupt())
-      → compose
+      → agent → insist  ⇄  guard  →  tools          (reads; back to agent)
+                           guard  →  approval       (ordinary writes; interrupt())
+                           guard  →  goal_workflow  (typed Goal subgraph)
+      → compose (ordinary turns; Goal already composed its own response)
       → extract_memory
       → END
 
@@ -30,6 +31,7 @@ from kira.agent.nodes.approve import approval
 from kira.agent.nodes.compose import compose
 from kira.agent.nodes.context import load_context
 from kira.agent.nodes.execute import tools
+from kira.agent.nodes.goal import goal_workflow
 from kira.agent.nodes.guard import guard, route_after_guard, route_after_tools
 from kira.agent.nodes.insist import insist
 from kira.agent.nodes.memory import extract_memory
@@ -44,6 +46,7 @@ def build_graph(checkpointer: BaseCheckpointSaver | None = None):
     builder.add_node("agent", agent)
     builder.add_node("insist", insist)
     builder.add_node("guard", guard)
+    builder.add_node("goal_workflow", goal_workflow)
     builder.add_node("tools", tools)
     builder.add_node("approval", approval)
     builder.add_node("compose", compose)
@@ -56,14 +59,26 @@ def build_graph(checkpointer: BaseCheckpointSaver | None = None):
     builder.add_conditional_edges(
         "guard",
         route_after_guard,
-        {"tools": "tools", "approval": "approval", "compose": "compose"},
+        {
+            "tools": "tools",
+            "approval": "approval",
+            "workflow": "goal_workflow",
+            "compose": "compose",
+        },
     )
     # A batch holding both reads and a write executes the reads first, then
     # stops at the write — so the approval card is asked with its evidence
     # already gathered.
     builder.add_conditional_edges(
-        "tools", route_after_tools, {"approval": "approval", "agent": "agent"}
+        "tools",
+        route_after_tools,
+        {"approval": "approval", "workflow": "goal_workflow", "agent": "agent"},
     )
+    # The Goal subgraph already composed the authoritative turn.
+    # The ordinary composer would spend a third LLM call; generic memory
+    # extraction would also misclassify "I want RM... for a goal" as a durable
+    # preference when it is already represented by the Goal domain.
+    builder.add_edge("goal_workflow", END)
     builder.add_edge("approval", "compose")
     builder.add_edge("compose", "extract_memory")
     builder.add_edge("extract_memory", END)

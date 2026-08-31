@@ -3,7 +3,14 @@ import { useEffect, useRef, useState } from "react";
 import type { ButlerThread, Capture } from "@kira/contracts";
 import { useQueryClient } from "@tanstack/react-query";
 
-import { ask, decide, type ButlerEvent, type EvidenceRow } from "../api/butler";
+import {
+  ask,
+  decide,
+  type ApprovalView,
+  type ButlerEvent,
+  type EvidenceRow,
+  type GoalPlanPreview,
+} from "../api/butler";
 import { activityKey, butlerThreadKey, dashboardTodayKey, memoriesKey } from "../api/hooks";
 import { IcArrow, IcCam, IcImg, IcMic } from "../components/Icons";
 import { ScanSheet } from "../components/ScanSheet";
@@ -17,7 +24,7 @@ type Turn = {
   text: string;
   evidence: EvidenceRow[];
   attachment?: Attachment;
-  approval?: { id: string; summary: string; tool: string } | null;
+  approval?: ApprovalView | null;
   applied?: boolean;
 };
 
@@ -27,10 +34,46 @@ type Live = {
   tools: string[];
   evidence: EvidenceRow[];
   text: string;
-  approval: { id: string; summary: string; tool: string } | null;
+  approval: ApprovalView | null;
 };
 
 const EMPTY: Live = { thinking: "", tools: [], evidence: [], text: "", approval: null };
+
+function planPreview(value: unknown): GoalPlanPreview | null {
+  if (!value || typeof value !== "object") return null;
+  const plan = value as Partial<GoalPlanPreview>;
+  if (
+    typeof plan.target_amount_sen !== "number" ||
+    typeof plan.current_saved_sen !== "number" ||
+    typeof plan.required_contribution_per_payday_sen !== "number" ||
+    typeof plan.target_date !== "string" ||
+    typeof plan.feasible !== "boolean"
+  ) {
+    return null;
+  }
+  return plan as GoalPlanPreview;
+}
+
+function approvalView(
+  id: string,
+  summary: string,
+  tool: string,
+  args: Record<string, unknown> = {},
+  before?: unknown,
+  after?: unknown,
+  basePlanVersion?: number,
+): ApprovalView {
+  return {
+    id,
+    summary,
+    tool,
+    before: planPreview(before ?? args.before),
+    after: planPreview(after ?? args.after),
+    basePlanVersion:
+      basePlanVersion ??
+      (typeof args.base_plan_version === "number" ? args.base_plan_version : undefined),
+  };
+}
 
 const PROMPTS = [
   "Can I afford RM60 dinner tonight?",
@@ -67,7 +110,7 @@ export function Butler({ thread, isLoading }: ButlerProps) {
         attachment: (message.attachment as Attachment) ?? null,
         approval:
           pending && index === thread.messages.length - 1 && message.role !== "user"
-            ? { id: pending.id, summary: pending.summary, tool: pending.tool }
+            ? approvalView(pending.id, pending.summary, pending.tool, pending.args)
             : null,
       })),
     );
@@ -97,7 +140,15 @@ export function Butler({ thread, isLoading }: ButlerProps) {
         case "approval":
           state = {
             ...state,
-            approval: { id: event.approval_id, summary: event.summary, tool: event.tool },
+            approval: approvalView(
+              event.approval_id,
+              event.summary,
+              event.tool,
+              event.args,
+              event.before,
+              event.after,
+              event.base_plan_version,
+            ),
           };
           break;
         case "done":
@@ -106,7 +157,7 @@ export function Butler({ thread, isLoading }: ButlerProps) {
             {
               role: "kira",
               text: event.answer || state.text,
-              evidence: event.evidence.length ? event.evidence : state.evidence,
+              evidence: event.evidence?.length ? event.evidence : state.evidence,
               approval: state.approval,
               applied: Boolean(event.applied),
             },
@@ -160,12 +211,16 @@ export function Butler({ thread, isLoading }: ButlerProps) {
     if (handed) send(handed);
   }, [isLoading]);
 
-  const respond = (id: string, action: "accept" | "reject") => {
+  const respond = (
+    id: string,
+    action: "accept" | "edit" | "reject",
+    args?: Record<string, unknown>,
+  ) => {
     if (live) return;
     setTurns((previous) =>
       previous.map((turn) => (turn.approval?.id === id ? { ...turn, approval: null } : turn)),
     );
-    void consume(decide({ id }, action));
+    void consume(decide({ id }, action, args));
   };
 
   const busy = live !== null;
@@ -212,9 +267,10 @@ export function Butler({ thread, isLoading }: ButlerProps) {
               <Evidence rows={turn.evidence} />
               {turn.approval && (
                 <Approval
-                  summary={turn.approval.summary}
+                  approval={turn.approval}
                   busy={busy}
                   onAccept={() => respond(turn.approval!.id, "accept")}
+                  onEdit={(args) => respond(turn.approval!.id, "edit", args)}
                   onReject={() => respond(turn.approval!.id, "reject")}
                 />
               )}
@@ -337,26 +393,112 @@ function Evidence({ rows }: { rows: EvidenceRow[] }) {
 }
 
 function Approval({
-  summary,
+  approval,
   busy,
   onAccept,
+  onEdit,
   onReject,
 }: {
-  summary: string;
+  approval: ApprovalView;
   busy: boolean;
   onAccept: () => void;
+  onEdit: (args: Record<string, unknown>) => void;
   onReject: () => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const after = approval.after;
+  const isGoalPlan = approval.tool === "apply_goal_plan_change" && Boolean(after);
+  const [target, setTarget] = useState(() =>
+    after ? senToRinggit(after.target_amount_sen) : "",
+  );
+  const [contribution, setContribution] = useState(() =>
+    after ? senToRinggit(after.required_contribution_per_payday_sen) : "",
+  );
+  const [targetDate, setTargetDate] = useState(after?.target_date ?? "");
+  const targetSen = ringgitToSen(target);
+  const contributionSen = ringgitToSen(contribution);
+  const validEdit = targetSen !== null && contributionSen !== null && Boolean(targetDate);
+
   return (
     <div className="approval">
       <span className="eyebrow on-ink" style={{ color: "var(--brass-lit)" }}>
         Proposed change · not applied
       </span>
-      <p style={{ margin: "10px 0 0", fontSize: 14.5, lineHeight: 1.5 }}>{summary}</p>
+      <p style={{ margin: "10px 0 0", fontSize: 14.5, lineHeight: 1.5 }}>
+        {approval.summary}
+      </p>
+      {isGoalPlan && !editing && (
+        <div className="goal-plan-compare">
+          <PlanPreview label="Before" plan={approval.before ?? null} />
+          <PlanPreview label="After" plan={after!} />
+        </div>
+      )}
+      {isGoalPlan && editing && (
+        <div className="goal-plan-edit">
+          <label>
+            Target amount (RM)
+            <input
+              aria-label="Target amount (RM)"
+              inputMode="decimal"
+              value={target}
+              onChange={(event) => setTarget(event.target.value)}
+            />
+          </label>
+          <label>
+            Per payday (RM)
+            <input
+              aria-label="Per payday (RM)"
+              inputMode="decimal"
+              value={contribution}
+              onChange={(event) => setContribution(event.target.value)}
+            />
+          </label>
+          <label>
+            Target date
+            <input
+              aria-label="Target date"
+              type="date"
+              value={targetDate}
+              onChange={(event) => setTargetDate(event.target.value)}
+            />
+          </label>
+        </div>
+      )}
       <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
-        <button className="btn btn-brass btn-sm" style={{ flex: 1 }} disabled={busy} onClick={onAccept}>
-          Approve
-        </button>
+        {editing ? (
+          <button
+            className="btn btn-brass btn-sm"
+            style={{ flex: 1 }}
+            disabled={busy || !validEdit}
+            onClick={() =>
+              onEdit({
+                target_amount_sen: targetSen,
+                contribution_per_payday_sen: contributionSen,
+                target_date: targetDate,
+              })
+            }
+          >
+            Recalculate
+          </button>
+        ) : (
+          <button
+            className="btn btn-brass btn-sm"
+            style={{ flex: 1 }}
+            disabled={busy}
+            onClick={onAccept}
+          >
+            Approve
+          </button>
+        )}
+        {isGoalPlan && (
+          <button
+            className="btn btn-sm btn-ghost"
+            disabled={busy}
+            onClick={() => setEditing((value) => !value)}
+          >
+            {editing ? "Cancel edit" : "Edit plan"}
+          </button>
+        )}
         <button className="btn btn-sm btn-ghost" disabled={busy} onClick={onReject}>
           Reject
         </button>
@@ -366,6 +508,43 @@ function Approval({
       </p>
     </div>
   );
+}
+
+function PlanPreview({ label, plan }: { label: string; plan: GoalPlanPreview | null }) {
+  return (
+    <div>
+      <span>{label}</span>
+      {plan ? (
+        <>
+          <b>RM{displayRinggit(plan.required_contribution_per_payday_sen)} / payday</b>
+          <small>RM{displayRinggit(plan.target_amount_sen)} by {plan.target_date}</small>
+        </>
+      ) : (
+        <b>No active plan</b>
+      )}
+    </div>
+  );
+}
+
+function senToRinggit(sen: number): string {
+  const whole = Math.trunc(sen / 100);
+  const cents = Math.abs(sen % 100).toString().padStart(2, "0");
+  return `${whole}.${cents}`;
+}
+
+function displayRinggit(sen: number): string {
+  const [whole, cents] = senToRinggit(sen).split(".");
+  return `${Number(whole).toLocaleString("en-MY")}.${cents}`;
+}
+
+function ringgitToSen(value: string): number | null {
+  const match = value.trim().match(/^(\d+)(?:\.(\d{1,2}))?$/);
+  if (!match) return null;
+  const whole = Number(match[1]);
+  const cents = Number((match[2] ?? "").padEnd(2, "0"));
+  if (!Number.isSafeInteger(whole) || whole <= 0) return null;
+  const sen = whole * 100 + cents;
+  return Number.isSafeInteger(sen) ? sen : null;
 }
 
 function AttachmentTag({ attachment }: { attachment: Attachment }) {

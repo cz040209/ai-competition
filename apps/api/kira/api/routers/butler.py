@@ -18,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kira.agent import events
+from kira.agent.goal_graph.presentation import goal_evidence, goal_resume_answer
 from kira.agent.goal_graph.run import resume_goal_run
 from kira.agent.run import stream_resume, stream_turn
 from kira.api.deps import CurrentUser, SessionDep, SessionFactory, StreamSessionDep
@@ -224,6 +225,7 @@ async def _resume_goal(
     async with factory() as session:
         user = (await session.execute(select(User).where(User.id == user_id))).scalar_one()
         approval = await butler_approvals.get(session, user, approval_id)
+        thread = await butler_thread.get_thread(session, user, approval.thread_id)
         try:
             request_id = uuid.UUID(approval.graph_thread_id.rsplit(":", 1)[-1])
         except ValueError:
@@ -238,17 +240,54 @@ async def _resume_goal(
             as_of_date=today_for(),
             explain=False,
         )
+        answer = goal_resume_answer(result, user.currency)
+        evidence = goal_evidence(result.state, user.currency)
+        if answer:
+            yield _sse({"type": events.TOKEN, "text": answer})
+        if evidence:
+            yield _sse({"type": events.EVIDENCE, "rows": evidence})
         if result.approval is not None:
-            yield _sse({"type": events.APPROVAL, **result.approval})
+            yield _sse(
+                {
+                    "type": events.APPROVAL,
+                    **result.approval,
+                    "module": "goal_planning",
+                    "args": {
+                        "before": result.approval.get("before"),
+                        "after": result.approval.get("after"),
+                        "base_plan_version": result.approval.get("base_plan_version"),
+                    },
+                }
+            )
+        applied = None
+        if (result.state.get("approval") or {}).get("status") == "applied":
+            applied = {
+                "tool": "apply_goal_plan_change",
+                "summary": "The approved goal plan version was saved.",
+            }
         yield _sse(
             {
                 "type": events.DONE,
-                "answer": result.final_response,
+                "answer": answer,
+                "evidence": evidence,
+                "tools_used": ["start_goal_planning"],
                 "request_id": str(result.request_id),
-                "approval": result.state.get("approval"),
+                "approval": result.approval or result.state.get("approval"),
+                "applied": applied,
                 "llm_calls": result.llm_calls,
             }
         )
+        if answer:
+            await butler_thread.append(
+                session,
+                user,
+                thread,
+                role=ROLE_KIRA,
+                content=answer,
+                evidence=evidence,
+                tool_calls=[{"name": "start_goal_planning"}],
+            )
+        await session.commit()
 
 
 async def _resume(

@@ -13,6 +13,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.runtime import Runtime
 from langgraph.types import interrupt
 from pydantic import ValidationError
+from sqlalchemy import select
 
 from kira import engine as finance_engine
 from kira.agent.goal_graph.prompts import GOAL_INTAKE_PROMPT, GOAL_RESPONSE_PROMPT
@@ -29,6 +30,7 @@ from kira.agent.goal_graph.state import (
     PlanChangeDraft,
 )
 from kira.agent.llm import get_chat_model
+from kira.db.models import Goal
 from kira.engine import (
     GOAL_TYPES,
     GoalDefinition,
@@ -87,8 +89,8 @@ def _normalise_intent(intent: GoalIntent) -> GoalIntent:
             if getattr(intent, field) is None:
                 missing.add(field)
     elif intent.action in {"replan", "impact", "select_scenario", "recalculate"}:
-        if intent.goal_id is None:
-            missing.add("goal_id")
+        if intent.goal_id is None and not intent.goal_reference:
+            missing.add("goal_reference")
     if intent.action == "impact" and intent.proposed_spend_sen is None:
         missing.add("proposed_spend_sen")
     if (
@@ -134,6 +136,100 @@ async def goal_intake(state: GoalGraphState, runtime: Runtime[GoalGraphContext])
     }
 
 
+def _reference_words(value: str) -> set[str]:
+    ignored = {"a", "an", "the", "my", "goal", "fund", "savings", "for"}
+    return {
+        word
+        for word in "".join(character if character.isalnum() else " " for character in value)
+        .casefold()
+        .split()
+        if word not in ignored
+    }
+
+
+async def resolve_goal_target(
+    state: GoalGraphState, runtime: Runtime[GoalGraphContext]
+) -> dict[str, Any]:
+    """Resolve a human goal name to an owned UUID without asking the model to invent one."""
+    intent = state.get("goal_intent")
+    if intent is None or intent.action == "create" or intent.goal_id is not None:
+        return {}
+    reference = (intent.goal_reference or "").strip()
+    goals = (
+        (
+            await runtime.context.session.execute(
+                select(Goal)
+                .where(
+                    Goal.user_id == runtime.context.user.id,
+                    Goal.status.in_(
+                        ("active", "at_risk", "needs_replan", "paused", "achieved")
+                    ),
+                )
+                .order_by(Goal.created_at, Goal.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not goals:
+        return {"errors": ["you do not have a goal to update yet"]}
+
+    reference_folded = reference.casefold()
+    exact = [goal for goal in goals if goal.name.casefold() == reference_folded]
+    if not exact:
+        wanted = _reference_words(reference)
+        scored: list[tuple[int, Goal]] = []
+        for goal in goals:
+            searchable = f"{goal.name} {_CANONICAL_NAMES.get(goal.goal_type, goal.goal_type)}"
+            score = len(wanted & _reference_words(searchable))
+            if score:
+                scored.append((score, goal))
+        best = max((score for score, _ in scored), default=0)
+        exact = [goal for score, goal in scored if score == best]
+    if not reference and len(goals) == 1:
+        exact = [goals[0]]
+    if len(exact) == 1:
+        resolved = intent.model_copy(
+            update={
+                "goal_id": exact[0].id,
+                "goal_reference": exact[0].name,
+                "missing_fields": [
+                    field for field in intent.missing_fields if field != "goal_reference"
+                ],
+            }
+        )
+        return {"goal_intent": resolved}
+    if len(exact) > 1:
+        names = ", ".join(goal.name for goal in exact)
+        return {"errors": [f"more than one goal matches '{reference}': {names}"]}
+    return {"errors": [f"I could not find a goal matching '{reference}'"]}
+
+
+def _definition_for_existing(goal: Goal, intent: GoalIntent) -> GoalDefinition:
+    """Read a versioned goal, or safely upgrade a legacy row during replanning."""
+    if goal.target_date is not None:
+        return definition_from_record(goal)
+    if intent.target_date is None:
+        raise ValueError(f"{goal.name} needs a target date before it can be planned")
+    return GoalDefinition(
+        goal_id=str(goal.id),
+        user_id=str(goal.user_id),
+        goal_type=intent.goal_type or goal.goal_type,
+        name=intent.name or goal.name,
+        currency=goal.currency,
+        target_amount_sen=intent.target_amount_sen or goal.target.sen,
+        current_saved_sen=(
+            intent.current_saved_sen
+            if intent.current_saved_sen is not None
+            else goal.saved.sen
+        ),
+        target_date=intent.target_date,
+        priority=intent.priority or goal.priority,
+        status=goal.status,
+        funding_account_ids=tuple(goal.funding_account_ids),
+    )
+
+
 async def goal_policy_guard(
     state: GoalGraphState, runtime: Runtime[GoalGraphContext]
 ) -> dict[str, Any]:
@@ -170,7 +266,7 @@ async def goal_policy_guard(
 
     try:
         goal = await owned_goal(context.session, context.user, intent.goal_id)
-        definition = definition_from_record(goal)
+        definition = _definition_for_existing(goal, intent)
     except (GoalNotFound, ValueError) as exc:
         return {"errors": [str(exc)]}
     definition = replace(
@@ -193,16 +289,22 @@ async def goal_policy_guard(
     )
     try:
         validate_goal_definition(definition, as_of_date=context.as_of_utc.date())
-        record_ = await current_plan_record(context.session, context.user, intent.goal_id)
-    except (GoalNotFound, TypeError, ValueError) as exc:
+    except (TypeError, ValueError) as exc:
         return {"errors": [str(exc)]}
-    base = plan_from_record(record_)
-    return {
+    updates: dict[str, Any] = {
         "goal_definition": definition,
-        "base_goal_definition": definition_from_record(goal),
-        "base_goal_plan": base,
-        "current_plan_version": record_.version,
+        "base_goal_definition": (
+            definition_from_record(goal) if goal.target_date is not None else None
+        ),
     }
+    try:
+        record_ = await current_plan_record(context.session, context.user, intent.goal_id)
+    except GoalNotFound:
+        updates["current_plan_version"] = 0
+    else:
+        updates["base_goal_plan"] = plan_from_record(record_)
+        updates["current_plan_version"] = record_.version
+    return updates
 
 
 async def load_financial_snapshot(
@@ -272,7 +374,10 @@ async def solve_goal_baseline(
     snapshot = state.get("financial_snapshot")
     if definition is None or snapshot is None:
         return {"errors": [*(state.get("errors") or []), "solver inputs unavailable"]}
-    override = state.get("override_contribution_sen")
+    intent = state.get("goal_intent")
+    override = state.get("override_contribution_sen") or (
+        intent.contribution_per_payday_sen if intent is not None else None
+    )
     plan = (
         calculate_goal_plan_for_contribution(definition, snapshot, override)
         if override is not None
@@ -595,6 +700,15 @@ async def approval_interrupt(
 
     if decision.action == "reject":
         await butler_approvals.settle(runtime.context.session, row, applied=False)
+        intent = state.get("goal_intent")
+        if intent is not None and intent.action == "create":
+            goal = await owned_goal(
+                runtime.context.session,
+                runtime.context.user,
+                uuid.UUID(draft.goal_id),
+            )
+            if goal.status == "draft":
+                goal.status = "cancelled"
         return {
             "approval": {"id": str(row.id), "status": "rejected"},
             "resume_action": "reject",
@@ -728,6 +842,11 @@ async def audit_goal_run(
 
 
 def route_after_intake(state: GoalGraphState) -> str:
+    intent = state.get("goal_intent")
+    return "clarify" if state.get("errors") or (intent and intent.missing_fields) else "resolve"
+
+
+def route_after_resolve(state: GoalGraphState) -> str:
     return "clarify" if state.get("errors") else "guard"
 
 
