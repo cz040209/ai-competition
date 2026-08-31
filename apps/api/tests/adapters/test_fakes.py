@@ -1,4 +1,6 @@
+import json
 from datetime import date
+from importlib.resources import files
 
 from kira.adapters.fakes import (
     KL_PLACES,
@@ -113,6 +115,25 @@ class TestTheShippedKlSet:
         # is a row the user cannot act on.
         for place in KL_PLACES:
             assert place.address.strip(), place.name
+
+    def test_the_kinds_in_the_file_reach_the_places_the_loader_builds(self):
+        # Read straight off the shipped file, because the loader is the thing
+        # under test here: a record can state four cuisines and still arrive as
+        # one place findable by a single word, which is the bug this whole
+        # field exists to fix and the one nothing else here would catch.
+        raw = json.loads(
+            (files("kira.adapters") / "data" / "kl_places.json").read_text(encoding="utf-8")
+        )
+        records = {record["id"]: record for record in raw["places"]}
+        assert len(records) == len(KL_PLACES)
+        for place in KL_PLACES:
+            assert list(place.kinds) == records[place.id]["kinds"], place.name
+            # The label is the first of them: it is the word the row shows and
+            # the one the estimate was banded from, so a list that began with
+            # anything else would price a place as one thing and show another.
+            assert place.kinds[0] == place.kind, place.name
+        several = sum(len(place.kinds) > 1 for place in KL_PLACES)
+        assert several > 20, several
 
     def test_confidence_is_always_one_of_the_three_bands(self):
         assert {place.confidence for place in KL_PLACES} <= {"high", "medium", "low"}

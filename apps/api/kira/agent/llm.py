@@ -517,6 +517,14 @@ def _stated(text: str) -> str:
 def _compose_places(messages: Sequence[BaseMessage], text: str) -> str:
     result = _payload(messages, "build_day_plan") or {}
     places = result.get("places") or []
+    # ``near_misses`` is in the payload and is deliberately never read here.
+    # Those are the places the kind filter turned away, and the only reason to
+    # mention one is knowing it serves the thing anyway -- that McDonald's,
+    # tagged burgers, fries chicken all day. That is world knowledge, and this
+    # composer is a handful of regexes: it has none, cannot get any, and a rule
+    # that guessed from a name would be inventing a menu. So the names below
+    # are the matches and nothing else, and the near misses go unmentioned
+    # rather than mentioned wrongly.
     # Said whatever came back, empty list included. What was read out of the
     # request is the same either way, and it is the half of the answer the user
     # cannot check for themselves.

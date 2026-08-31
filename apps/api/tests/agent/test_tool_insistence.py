@@ -14,14 +14,21 @@ from __future__ import annotations
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
 from sqlalchemy import select
 
+from kira.agent.llm import OfflineChatModel
 from kira.agent.nodes import insist as insist_node
 from kira.agent.nodes.compose import NOTHING_RAN
 from kira.agent.run import run_turn
 from kira.agent.tools import REGISTRY
 from kira.db.models import SOURCE_PLAN, ButlerApproval, Transaction
-from tests.agent.conftest import declining_factory, offline_factory, scripted_factory
+from tests.agent.conftest import (
+    ScriptedModel,
+    declining_factory,
+    offline_factory,
+    scripted_factory,
+)
 
 # What the online model actually wrote when it had called nothing. Kept
 # verbatim: a test written against invented prose would not be about this bug.
@@ -194,6 +201,132 @@ class TestTurnsThatAreNotAboutPlaces:
             },
         )
         assert "build_day_plan" not in result.tools_used
+
+
+class TestAModelWhoseOnlyCallIsRefused:
+    """The hole the guarantee had, found against the live model.
+
+    ``insist`` stands down the moment the model proposes anything, on the
+    grounds that a model engaging with its tools has better arguments than a
+    regex. But a proposal is not a result: the guard can refuse it, and when
+    every call in a turn is refused nothing runs, nothing is left to compose
+    from, and the run used to go straight to the "I didn't look anything up"
+    refusal — on a turn about places, which is the one turn that must never
+    end there.
+
+    Live, on a fresh thread: "i want fried chicken — add the cheapest one to
+    today" is read as a places turn, and Qwen answered it by proposing
+    add_place_to_today with an id it could not have — the ids are in the
+    previous turn's tool payload, and the rendered history carries none of
+    them. The guard refused it and the user got the refusal.
+    """
+
+    TURN = "i want fried chicken — add the cheapest one to today"
+
+    REFUSED = (
+        # A place id the model invented: refused by the policy, since no place
+        # of that id is within range of the search.
+        (
+            "add_place_to_today",
+            {
+                "place_id": "kl999",
+                "name": "Somewhere",
+                "total_sen": 1400,
+                "lat": 3.1577,
+                "lng": 101.7120,
+            },
+        ),
+        # Arguments the schema rejects.
+        ("add_place_to_today", {"place_id": "", "name": "", "total_sen": 0}),
+        # A tool that does not exist.
+        ("apply_plan_change", {"amount_sen": 100}),
+    )
+
+    @pytest.mark.parametrize("call", REFUSED)
+    async def test_the_planner_still_runs(self, session, butler, today, place_world, call):
+        result = await ask(session, butler, today, self.TURN, scripted_factory(call))
+        assert result.tools_used == ["build_day_plan"]
+        assert dict(result.evidence)["Safe to spend today"] == "RM52.97"
+        assert result.answer != NOTHING_RAN
+        # And on the kind the sentence asked for, not on the tool's defaults:
+        # there is no chicken in the fixed world, and the answer says so with
+        # the count behind it rather than shrugging.
+        assert "No chicken within range of you" in result.answer
+        assert ["Nearby places", "7 within range, none of them Chicken"] in result.evidence
+
+    @pytest.mark.parametrize("call", REFUSED)
+    async def test_the_refusal_wrote_nothing_on_the_way(
+        self, session, butler, today, place_world, call
+    ):
+        # The second pass is a second go at the tools, not a second go at the
+        # write boundary: nothing reached a card and nothing reached the ledger.
+        result = await ask(session, butler, today, self.TURN, scripted_factory(call))
+        assert result.approval is None
+        assert (await session.execute(select(ButlerApproval))).scalars().first() is None
+        planned = await session.execute(
+            select(Transaction).where(Transaction.source == SOURCE_PLAN)
+        )
+        assert planned.scalars().first() is None
+
+    async def test_a_refused_call_on_a_turn_that_is_not_about_places_still_stops(
+        self, session, butler, today, place_world
+    ):
+        # The extra lap is for the model to read the refusal and correct
+        # itself, not a licence to answer a question about a protected bill
+        # with a list of restaurants.
+        result = await ask(
+            session,
+            butler,
+            today,
+            "Cut the rent",
+            scripted_factory(("apply_plan_change", {"amount_sen": 100})),
+        )
+        assert result.tools_used == []
+        assert result.answer == NOTHING_RAN
+
+    async def test_it_goes_round_once_and_not_for_ever(
+        self, session, butler, today, place_world
+    ):
+        """A model that proposes the same refused call again has to stop.
+
+        ``ScriptedModel`` answers the second pass with prose because tool
+        results are in the messages by then, so this drives the loop with a
+        model that keeps proposing instead — the shape a real one has, and the
+        one that would circle until the iteration cap without a bound here.
+        """
+
+        passes: list[int] = []
+
+        class Stubborn(ScriptedModel):
+            def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+                if not self.bound_tools:
+                    return OfflineChatModel._generate(self, messages, stop, run_manager, **kwargs)
+                passes.append(1)
+                calls = [
+                    {"name": name, "args": args, "id": f"stubborn-{index}", "type": "tool_call"}
+                    for index, (name, args) in enumerate(self.calls)
+                ]
+                return ChatResult(
+                    generations=[
+                        ChatGeneration(message=AIMessage(content="", tool_calls=calls))
+                    ]
+                )
+
+        def factory(**kwargs):
+            return Stubborn(
+                attachment=kwargs.get("attachment"),
+                history=kwargs.get("history", ""),
+                calls=[("apply_plan_change", {"amount_sen": 100})],
+            )
+
+        result = await ask(session, butler, today, self.TURN, factory)
+        # Two goes at the model and no more: the proposal, the refusal, one
+        # correction. Counted rather than inferred from the answer, because the
+        # answer is the same whether this stopped at two or ran to the
+        # iteration cap at six.
+        assert len(passes) == 2
+        assert result.tools_used == []
+        assert result.answer == NOTHING_RAN
 
 
 class TestNothingIsEverWrittenByThis:

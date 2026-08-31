@@ -11,7 +11,7 @@ import uuid
 from datetime import UTC, datetime
 
 import pytest
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from kira.agent import prompt
 from kira.agent.llm import OfflineChatModel, _amount_sen, route_for
@@ -37,6 +37,45 @@ async def ask(session, butler, today, text, **kwargs):
         model_factory=offline_factory,
         **kwargs,
     )
+
+
+# Kept out of the model rather than on it: the model is a pydantic object, and a
+# list field would be validated into a copy the caller never sees again.
+COMPOSED: list[str] = []
+
+
+class ComposeSpy(OfflineChatModel):
+    """The offline model, keeping the system prompt of the composing turn.
+
+    "No tools bound" is exactly that turn: compose binds none, which is what
+    lets it stream, and is also why a tool's own description never reaches it.
+    """
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        if not self.bound_tools:
+            COMPOSED.append(
+                "\n\n".join(
+                    message.content
+                    for message in messages
+                    if isinstance(message, SystemMessage)
+                )
+            )
+        return super()._generate(messages, stop, run_manager, **kwargs)
+
+
+def compose_spy_factory(**kwargs):
+    return ComposeSpy(attachment=kwargs.get("attachment"), history=kwargs.get("history", ""))
+
+
+async def compose_prompt(session, butler, today, text) -> str:
+    """Everything the turn that writes the answer was told, for one question."""
+    COMPOSED.clear()
+    user, thread = butler
+    await run_turn(
+        session, user, thread, text=text, today=today, model_factory=compose_spy_factory
+    )
+    assert COMPOSED, "compose never ran"
+    return COMPOSED[-1]
 
 
 async def say(session, butler, today, text, **kwargs):
@@ -372,6 +411,111 @@ class TestAskingTheButlerForOneKindOfFood:
         with serving(places=place_world.crowd):
             result = await ask(session, butler, today, "Where can I eat under RM25?")
         assert "10 more came in under RM25 as well" in result.answer
+
+
+class TestTheOfflineAnswerHasNoMenuInItsHead:
+    """The planner now hands over the places a kind filter turned away.
+
+    Online that is the point: a model can know that McDonald's, tagged burgers,
+    fries chicken all day, and say so. Offline there is no model -- there is a
+    handful of regexes, which know the word "noodles" and nothing whatever
+    about what any shop cooks. So the near misses arrive and go unspoken. Not
+    as a rule being obeyed: there is simply nothing here that could honestly
+    say anything about them, and a guess made off a name would be a menu
+    invented out of nothing.
+    """
+
+    def _unmatched(self, world):
+        return (
+            world.cheap,
+            world.mid,
+            world.near_non_halal,
+            world.pricey,
+            world.far_non_halal,
+            world.second_cafe,
+        )
+
+    async def test_it_names_the_place_that_matched_and_none_of_the_rest(
+        self, session, butler, today, place_world
+    ):
+        result = await ask(session, butler, today, "Where can I eat noodles nearby?")
+        assert place_world.noodles.name in result.answer
+        for place in self._unmatched(place_world):
+            assert place.name not in result.answer, place.name
+
+    async def test_a_kind_nothing_matched_is_answered_without_naming_a_shop(
+        self, session, butler, today, place_world
+    ):
+        # There is no Korean food in the fixed world, and four places the
+        # search turned away are sitting in the payload. Offline the answer is
+        # what kinds of food are around, priced -- never one of those four
+        # renamed as somewhere that might do Korean after all.
+        result = await ask(session, butler, today, "Where can I eat korean food nearby?")
+        assert "No korean within range of you" in result.answer
+        assert "What is around you: cafe from RM9" in result.answer
+        for place in self._unmatched(place_world):
+            assert place.name not in result.answer, place.name
+        assert place_world.noodles.name not in result.answer
+
+    async def test_the_panel_still_records_them_and_says_what_they_are(
+        self, session, butler, today, place_world
+    ):
+        # Unspoken is not unrecorded. The tool returned them and the evidence
+        # says so, at the kinds the data gives them -- which is the same panel
+        # the online model's suggestion would have to stand next to.
+        result = await ask(session, butler, today, "Where can I eat noodles nearby?")
+        also = [value for label, value in result.evidence if label == "Also nearby"]
+        assert f"{place_world.mid.name} · Mamak · RM12.50" in also
+        assert not any("Noodles" in value for value in also)
+
+
+class TestTheTurnThatWritesTheAnswerIsToldTheRules:
+    """Where the near-miss rules have to be, rather than where they were.
+
+    They were written into ``build_day_plan``'s description, and a tool
+    description is bound to the reasoning turns and to nothing else. Compose
+    binds no tools — that is what lets it stream — so the turn whose sentence
+    the user actually reads was handed four places the kind filter turned away,
+    as "Also nearby: Kopi Kaki · Cafe · RM9.00", with nothing above it saying
+    they had not matched and nothing forbidding a fifth name that came back
+    from no search at all. That is the shape of the failure this project has
+    already shipped once, so both rules are now stated where this turn reads
+    them.
+    """
+
+    async def test_compose_is_handed_the_near_misses(
+        self, session, butler, today, place_world
+    ):
+        # The half that makes the other half matter: these names really do
+        # reach the turn that writes the prose, in the payload and in the rows.
+        seen = await compose_prompt(session, butler, today, "Where can I eat noodles nearby?")
+        assert f"Also nearby: {place_world.cheap.name} · Cafe · RM9.00" in seen
+
+    async def test_it_is_forbidden_to_name_anything_else(
+        self, session, butler, today, place_world
+    ):
+        seen = await compose_prompt(session, butler, today, "Where can I eat noodles nearby?")
+        assert "Name only what the tools above actually returned" in seen
+        assert "A name\nin none of them is one you invented" in seen
+
+    async def test_it_is_told_what_an_also_nearby_row_is(
+        self, session, butler, today, place_world
+    ):
+        seen = await compose_prompt(session, butler, today, "Where can I eat noodles nearby?")
+        assert 'A place given as "also nearby"' in seen
+        assert "is one the search turned away" in seen
+        # Suggestion, never assertion: the menu claim is the model's and the
+        # price is the row's.
+        assert "yours to suggest" in seen
+        assert "quote no price but the one on its row" in seen
+
+    async def test_the_rule_is_there_on_a_turn_with_no_places_in_it(
+        self, session, butler, today, place_world
+    ):
+        # A merchant and a bill are names too. The instruction is one string on
+        # every composing turn rather than something the planner switches on.
+        seen = await compose_prompt(session, butler, today, "What bills are due?")
+        assert "Name only what the tools above actually returned" in seen
 
 
 class TestTheAnswerChoosesInsteadOfEnumerating:

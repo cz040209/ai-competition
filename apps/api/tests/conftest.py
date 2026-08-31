@@ -102,11 +102,14 @@ class PlaceWorld:
 
     ``crowd`` is a separate, larger world for the one question the seven cannot
     answer: what a caller does when there are more places than it means to hand
-    back. Nothing else uses it, so the seven stay small enough to reason about.
+    back. ``multi_kind`` is a separate world for another one: a place that
+    serves two kinds of food. Nothing else uses either, so the seven stay small
+    enough to reason about.
     """
 
     places: tuple[Place, ...]
     crowd: tuple[Place, ...]
+    multi_kind: tuple[Place, ...]
     origin: dict[str, float]
     out_of_range: dict[str, float]
     lone_non_halal: dict[str, float]
@@ -117,6 +120,9 @@ class PlaceWorld:
     far_non_halal: Place
     noodles: Place
     second_cafe: Place
+    two_kinds: Place
+    one_kind: Place
+    other_kind: Place
 
 
 _CHEAP = Place(
@@ -232,9 +238,61 @@ _CROWD: tuple[Place, ...] = tuple(
     for index in range(1, 14)
 )
 
+# A world of three for the one thing the seven cannot show: a place
+# OpenStreetMap gives more than one cuisine. Nando's is the real case --
+# ``cuisine=chicken;portuguese`` -- and a fifth of the places OSM knows
+# anything about are like it. Kept apart from the seven so that every count
+# over there stays as easy to read as it was, and all within walking distance
+# so the whole outing is the meal.
+_TWO_KINDS = Place(
+    "k1",
+    "Ayam Piri Piri",
+    # The label, and the kind the estimate was banded from. "Portuguese" is
+    # only ever matched on -- and it is deliberately a word the shipped
+    # vocabulary does not have, because the filter matches against the places
+    # in range rather than against that vocabulary.
+    "Chicken",
+    _north(0.5),
+    _ORIGIN_LNG,
+    Money(1600),
+    "high",
+    True,
+    "Chicken and Portuguese, tagged the way OSM tags Nando's.",
+    address="1 Jalan Ayam, Kuala Lumpur",
+    kinds=("Chicken", "Portuguese"),
+)
+_ONE_KIND = Place(
+    "k2",
+    "Ayam Gunting",
+    # The same kind as the one above and nothing else, and dearer -- so a
+    # search for chicken has two to return and the cheaper of them is the one
+    # carrying the second kind.
+    "Chicken",
+    _north(1.0),
+    _ORIGIN_LNG,
+    Money(2400),
+    "high",
+    True,
+    "Chicken and only chicken.",
+    address="2 Jalan Ayam, Kuala Lumpur",
+)
+_OTHER_KIND = Place(
+    "k3",
+    "Mamak Ketiga",
+    "Mamak",
+    _north(1.5),
+    _ORIGIN_LNG,
+    Money(1200),
+    "high",
+    True,
+    "The cheapest of the three, and nothing to do with chicken.",
+    address="3 Jalan Ayam, Kuala Lumpur",
+)
+
 PLACE_WORLD = PlaceWorld(
     places=(_CHEAP, _MID, _NEAR_NON_HALAL, _PRICEY, _FAR_NON_HALAL, _NOODLES, _SECOND_CAFE),
     crowd=_CROWD,
+    multi_kind=(_TWO_KINDS, _ONE_KIND, _OTHER_KIND),
     origin={"lat": _ORIGIN_LAT, "lng": _ORIGIN_LNG},
     # George Town, Penang: ~294 km from all seven.
     out_of_range={"lat": 5.4141, "lng": 100.3288},
@@ -249,6 +307,9 @@ PLACE_WORLD = PlaceWorld(
     far_non_halal=_FAR_NON_HALAL,
     noodles=_NOODLES,
     second_cafe=_SECOND_CAFE,
+    two_kinds=_TWO_KINDS,
+    one_kind=_ONE_KIND,
+    other_kind=_OTHER_KIND,
 )
 
 

@@ -137,17 +137,49 @@ def fetch() -> list[dict]:
         return json.load(response)["elements"]
 
 
-def band(tags: dict) -> tuple[str, int, str]:
-    """Label, estimate and confidence for a place, from what OSM knows of it."""
+def cuisine_hits(tags: dict) -> list[tuple[str, int, str]]:
+    """Every band the cuisine tag resolves to, in the order OSM states them.
+
+    OSM lets one place carry several cuisines separated by semicolons, and 532
+    of the 2,564 tagged places in the KL box do -- Nando's is
+    ``chicken;portuguese``, Jake's Charbroil is ``steak_house;seafood``. Two
+    spellings of one band (``cantonese;chinese``) collapse to one entry, since
+    the point of the list is what the place can be found by.
+    """
+    hits: list[tuple[str, int, str]] = []
+    labels: set[str] = set()
     for raw in (tags.get("cuisine") or "").split(";"):
         hit = CUISINE_BANDS.get(raw.strip().lower())
-        if hit:
-            label, sen, confidence = hit
-            # A recognisable chain prices predictably; an unbranded shop does not.
-            if tags.get("brand") and confidence != "high":
-                confidence = "high" if sen < 3000 else "medium"
-            return label, sen, confidence
+        if hit and hit[0] not in labels:
+            labels.add(hit[0])
+            hits.append(hit)
+    return hits
+
+
+def band(tags: dict) -> tuple[str, int, str]:
+    """Label, estimate and confidence for a place, from what OSM knows of it.
+
+    The FIRST cuisine that resolves, exactly as it always was. Recording the
+    rest widens what a place can be found by and must not move what it costs:
+    a place has not become dearer because OSM also calls it a seafood place.
+    """
+    hits = cuisine_hits(tags)
+    if hits:
+        label, sen, confidence = hits[0]
+        # A recognisable chain prices predictably; an unbranded shop does not.
+        if tags.get("brand") and confidence != "high":
+            confidence = "high" if sen < 3000 else "medium"
+        return label, sen, confidence
     return AMENITY_FALLBACK.get(tags.get("amenity", ""), ("Restaurant", 2200, "low"))
+
+
+def kinds_of(tags: dict, primary: str) -> list[str]:
+    """Every kind the place can be searched by, the display label first.
+
+    A place whose cuisine tag resolved to nothing was banded off its amenity
+    instead, so the one label ``band`` produced is all it can be found by.
+    """
+    return [hit[0] for hit in cuisine_hits(tags)] or [primary]
 
 
 def is_halal(tags: dict) -> bool:
@@ -317,6 +349,10 @@ def main() -> int:
                 "id": f"kl{index:03d}",
                 "name": record["name"],
                 "kind": label,
+                # The label is the first of these, always. The rest are the
+                # other cuisines OSM states, kept so a search for seafood can
+                # reach a steakhouse that serves it.
+                "kinds": kinds_of(record["tags"], label),
                 "lat": round(record["lat"], 6),
                 "lng": round(record["lng"], 6),
                 "estimate_sen": sen,
@@ -333,7 +369,10 @@ def main() -> int:
             "OpenStreetMap, (c) OpenStreetMap contributors, ODbL "
             "(https://www.openstreetmap.org/copyright). Prices are NOT from OSM: "
             "no Places API exposes menu prices, so each estimate is banded from "
-            "the kind of place it is and carries its own confidence. 'halal' is "
+            "the kind of place it is and carries its own confidence. 'kind' is "
+            "the label a row is shown under and the one the estimate came from; "
+            "'kinds' is every cuisine OSM states for the place, that label "
+            "first, and is what a search matches against. 'halal' is "
             "true only where OSM states it; unverified is false, and the UI "
             "filters on it rather than labelling anything 'not halal'. "
             "Regenerate with scripts/fetch-kl-places.py."
@@ -344,11 +383,13 @@ def main() -> int:
     OUT.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
 
     halal_count = sum(r["halal"] for r in records)
+    multi_kind = sum(len(r["kinds"]) > 1 for r in records)
     districts = defaultdict(int)
     for record in chosen[: len(records)]:
         districts[record["district"]] += 1
     print(f"wrote {len(records)} places to {OUT}", file=sys.stderr)
     print(f"  halal: {halal_count}  districts: {len(districts)}", file=sys.stderr)
+    print(f"  carrying more than one kind: {multi_kind}", file=sys.stderr)
     return 0
 
 

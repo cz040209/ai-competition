@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from kira.agent.tools import ToolContext
+from kira.agent.tools import REGISTRY, ToolContext
 from kira.agent.tools.day_plan import SPECS, PlanArgs, _build
 from kira.db.models import TXN_CONFIRMED, Transaction
 from kira.money import Money
@@ -415,3 +415,149 @@ class TestTheNearestPlacesAboveTheCeiling:
         spec = next(spec for spec in SPECS if spec.name == "build_day_plan")
         assert "nearest_over_cap" in spec.description
         assert "Never present one as fitting" in spec.description
+
+
+class TestThePlacesTheKindFilterTurnedAway:
+    """The one place in this planner where the model knows more than the data.
+
+    OpenStreetMap records one cuisine word per place. It calls McDonald's
+    burgers, which is true and incomplete: a search for chicken finds KFC and
+    says nothing about the McDonald's across the road, and no refresh of the
+    file changes that because there is no tag for a menu. So a few of the
+    turned-away places are handed over at their real kinds and real prices, and
+    the model may point at one when it knows better -- while the panel goes on
+    saying what the data said.
+    """
+
+    async def test_they_come_back_only_when_a_kind_was_asked_for(
+        self, session, user, today, place_world
+    ):
+        context = await context_for(session, user, today)
+        wide = await _build(context, PlanArgs(cap_sen=100_000, **place_world.origin))
+        narrow = await _build(
+            context, PlanArgs(cap_sen=100_000, kind="Noodles", **place_world.origin)
+        )
+
+        # Nothing was filtered, so nothing missed.
+        assert wide.value["near_misses"] == []
+        assert narrow.value["near_misses"]
+
+    async def test_each_one_carries_its_real_kind_and_the_price_that_was_measured(
+        self, session, user, today, place_world
+    ):
+        context = await context_for(session, user, today)
+        result = await _build(
+            context, PlanArgs(cap_sen=100_000, kind="Noodles", **place_world.origin)
+        )
+
+        assert [p["name"] for p in result.value["places"]] == [place_world.noodles.name]
+        # The nearest of each other kind, nearest first. Nothing here says
+        # "noodles" anywhere: they are a cafe, a mamak, a Chinese place and a
+        # Japanese one, and that is exactly what they are labelled.
+        assert [(p["name"], p["kind"], p["total_sen"]) for p in result.value["near_misses"]] == [
+            (place_world.cheap.name, "Cafe", 900),
+            (place_world.mid.name, "Mamak", 1250),
+            (place_world.near_non_halal.name, "Chinese", 1600),
+            (place_world.pricey.name, "Japanese", 5000),
+        ]
+
+    async def test_they_are_never_folded_into_the_places_that_matched(
+        self, session, user, today, place_world
+    ):
+        context = await context_for(session, user, today)
+        result = await _build(
+            context, PlanArgs(cap_sen=100_000, kind="Cafe", **place_world.origin)
+        )
+
+        matched = {p["id"] for p in result.value["places"]}
+        assert matched & {p["id"] for p in result.value["near_misses"]} == set()
+        # And no count of what the search found includes them: a near miss is
+        # not a result, and a model reading shown_count must not find them in it.
+        assert result.value["shown_count"] == result.value["kind_count"] == 2
+        assert result.value["total_under_cap"] == 2
+
+    async def test_the_list_is_short(self, session, user, today, place_world):
+        # Five other kinds are in range. A long second list stops reading as an
+        # aside and starts reading as the answer, beside twelve matches and a
+        # whole price landscape already going over.
+        context = await context_for(session, user, today)
+        result = await _build(
+            context, PlanArgs(cap_sen=100_000, kind="Cafe", **place_world.origin)
+        )
+
+        assert len(result.value["near_misses"]) == 4
+        assert len({p["kind"] for p in result.value["near_misses"]}) == 4
+
+    async def test_the_evidence_states_the_kind_the_data_gave_each_of_them(
+        self, session, user, today, place_world
+    ):
+        """The guardrail, and the reason the rows are emitted for all of them.
+
+        Which near miss the answer names cannot be known until after the answer
+        is written, so every one of them gets a row. If the model says the
+        mamak does noodles too, the panel underneath still reads Mamak.
+        """
+        context = await context_for(session, user, today)
+        result = await _build(
+            context, PlanArgs(cap_sen=100_000, kind="Noodles", **place_world.origin)
+        )
+
+        rows = [row.as_pair() for row in result.evidence]
+        assert ["Also nearby", f"{place_world.mid.name} · Mamak · RM12.50"] in rows
+        assert ["Also nearby", f"{place_world.cheap.name} · Cafe · RM9.00"] in rows
+        # One row per near miss and not one more.
+        also = [value for label, value in rows if label == "Also nearby"]
+        assert len(also) == len(result.value["near_misses"]) == 4
+        # Nothing in the panel calls any of them noodles.
+        assert not any("Noodles" in value for value in also)
+        # The recommendation is still the place that actually matched.
+        assert dict(rows)["Cheapest nearby"] == place_world.noodles.name
+
+    async def test_a_kind_nothing_matched_still_hands_over_what_is_there(
+        self, session, user, today, place_world
+    ):
+        # The most useful case: no Korean food here at all, and the model is
+        # handed the places that are, rather than only an apology and a count.
+        context = await context_for(session, user, today)
+        result = await _build(
+            context, PlanArgs(cap_sen=100_000, kind="Korean", **place_world.origin)
+        )
+
+        assert result.value["places"] == []
+        assert len(result.value["near_misses"]) == 4
+        evidence = [row.as_pair() for row in result.evidence]
+        assert ["Nearby places", "7 within range, none of them Korean"] in evidence
+        assert ["Also nearby", f"{place_world.cheap.name} · Cafe · RM9.00"] in evidence
+
+    def test_the_description_says_it_may_suggest_a_menu_but_never_state_one(self):
+        described = {spec.name: spec.description for spec in SPECS}["build_day_plan"]
+        assert "near_misses" in described
+        # The distinction the whole feature turns on: the price is the tool's
+        # and the menu is the model's.
+        assert "Suggest it, never assert it" in described
+        assert "the claim about the food is yours" in described
+        # And where that knowledge is worth anything. A chain it can be sure
+        # of; a shop it has only ever seen the name of it cannot.
+        assert "global chain" in described
+        assert "Restoran MK Corner" in described
+
+    def test_the_description_forbids_naming_a_place_that_was_not_returned(self):
+        """The line the whole phase rests on, pinned where the model reads it.
+
+        This project has already produced "Sushi Tei (Mid Valley Megamall),
+        RM42" -- a restaurant that was in no tool result and, for all anyone
+        knows, in no shopping mall. Reasoning over real rows and inventing a
+        shop look identical in the finished sentence, and the difference
+        between them is this instruction. Nothing else in the code can enforce
+        it: a name is a string, and no guard can tell one that came out of the
+        data from one that did not.
+        """
+        schema = REGISTRY.get("build_day_plan").json_schema()
+        described = schema["function"]["description"]
+        assert "Name only places this tool returned to you" in described
+        assert "Never name a restaurant that is not in one of those lists" in described
+        # Naming the three lists it may name out of, so "returned to you" is not
+        # left to interpretation.
+        assert "`places`" in described
+        assert "`nearest_over_cap`" in described
+        assert "`near_misses`" in described

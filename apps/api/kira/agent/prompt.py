@@ -128,8 +128,29 @@ def system_prompt(
     return "\n\n".join(blocks)
 
 
+# The rules about naming a place live in build_day_plan's own description, and
+# that description is bound to the reasoning turns only. This turn — the one
+# whose words the user actually reads — is handed the tool payload and the
+# evidence rows with none of it: the names of places the kind filter turned
+# away arrive here as "Also nearby: McDonald's · Burgers · RM18.00" and nothing
+# above says they did not match, nor that a shop absent from every list must
+# not be named at all. That gap is where "Sushi Tei (Mid Valley Megamall),
+# RM42" came from, so the two rules that matter are restated where this turn
+# can read them. Written generally rather than about the planner: a merchant, a
+# bill and a goal are names too, and none of them is this turn's to invent.
 COMPOSE_INSTRUCTION = """Write the answer now.
 
 You have the tool results above. Use those figures exactly. Two paragraphs at most:
 the first is one sentence containing the number that answers the question; the second
-is the short reason behind it. Do not list the evidence — the interface shows it."""
+is the short reason behind it. Do not list the evidence — the interface shows it.
+
+Name only what the tools above actually returned — a place, a merchant, a bill. A name
+in none of them is one you invented, however certain you are that it exists and is round
+the corner: it reads to the user exactly like a measured one, and the panel beside your
+answer has nothing to put behind it.
+
+Some of what came back did not match what was asked for. A place given as "also nearby"
+is one the search turned away, and the kind beside its name is the kind the data records
+for it. You may still say you believe it serves what was asked — that is yours to suggest
+and never the data's to state — but say it as your own suggestion, after the
+recommendation rather than in place of it, and quote no price but the one on its row."""

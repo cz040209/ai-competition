@@ -43,14 +43,24 @@ async def guard(state: ButlerState, runtime: Runtime[ButlerContext]) -> dict:
     reply = _last_ai(state)
     calls = list(getattr(reply, "tool_calls", None) or [])
     if not calls:
-        return {"approved_reads": [], "pending_write": None}
+        # Cleared, not left standing. `refusals` says what THIS pass turned
+        # away, and `route_after_guard` reads it to decide whether the turn is
+        # heading for compose with nothing at all. A pass that proposed nothing
+        # refused nothing, and a leftover from the pass before it would send
+        # the run back round for a refusal the model has already answered.
+        return {"approved_reads": [], "pending_write": None, "refusals": []}
 
     context = runtime.context
     settings = get_settings()
     if state.get("iterations", 0) > settings.butler_max_tool_iterations:
+        # Refusals cleared for the same reason as above, and here it is
+        # load-bearing rather than tidy: this branch is the stop, and a stale
+        # list left in the state would have `route_after_guard` send the run
+        # back to the model to be stopped again.
         return {
             "approved_reads": [],
             "pending_write": None,
+            "refusals": [],
             "messages": [
                 _refusal(call, "Enough looking; answer from what you already have.")
                 for call in calls
@@ -119,6 +129,32 @@ def route_after_guard(state: ButlerState) -> str:
         return "tools"
     if state.get("pending_write"):
         return "approval"
+    # Everything the model asked for was refused, and nothing has run this
+    # turn. Straight on to compose, that is an answer built from no evidence at
+    # all -- the honest refusal, which is the one outcome the whole insistence
+    # design exists to stop a question about places reaching. Measured against
+    # a live Qwen: "i want fried chicken — add the cheapest one to today" is a
+    # places turn, the model answered it by proposing add_place_to_today with
+    # an id it could not have (the ids are in the previous turn's tool payload,
+    # and the rendered history carries none), the guard refused it, and
+    # `insist` had already stood down on the grounds that the model was
+    # engaging with its tools. The planner never ran and the user got "I didn't
+    # look anything up for that."
+    #
+    # So the run goes back to the model instead, which is also the only way the
+    # refusal is ever read: `_refusal` writes it as a tool result precisely so
+    # the model can see it, and a turn where every call was refused is exactly
+    # the turn where nobody would have. On that pass the model can correct its
+    # call, and `insist` gets the go it was denied.
+    #
+    # Once only, and that is enough for both jobs: the refusal has been read
+    # and insist has had its chance, so a second lap would be the same lap.
+    # `iterations` counts the model's own turns and is one here. The bound is
+    # not decoration -- without it a model that keeps proposing the same
+    # refused call circles until the recursion limit, because the iteration cap
+    # above is itself a refusal with nothing permitted.
+    if state.get("refusals") and not state.get("tools_used") and state.get("iterations", 0) <= 1:
+        return "agent"
     return "compose"
 
 

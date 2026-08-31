@@ -4,6 +4,7 @@
       → load_context
       → agent → insist  ⇄  guard  →  tools       (reads; back to agent)
                            guard  →  approval    (writes; interrupt())
+                           guard  →  agent       (all refused, nothing ran; once)
       → compose
       → extract_memory
       → END
@@ -53,10 +54,13 @@ def build_graph(checkpointer: BaseCheckpointSaver | None = None):
     builder.add_edge("load_context", "agent")
     builder.add_edge("agent", "insist")
     builder.add_edge("insist", "guard")
+    # Back to `agent` is the fourth way out, and the narrow one: every call
+    # this pass proposed was refused and nothing has run, so the turn would
+    # otherwise compose from no evidence. See `route_after_guard`.
     builder.add_conditional_edges(
         "guard",
         route_after_guard,
-        {"tools": "tools", "approval": "approval", "compose": "compose"},
+        {"tools": "tools", "approval": "approval", "compose": "compose", "agent": "agent"},
     )
     # A batch holding both reads and a write executes the reads first, then
     # stops at the write — so the approval card is asked with its evidence

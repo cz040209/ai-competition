@@ -40,6 +40,10 @@ def _load_kl_places() -> tuple[Place, ...]:
             record["halal"],
             record["note"],
             record["address"],
+            # Every cuisine OSM states for the place, display kind first. A
+            # record from before the field existed carries none, and Place
+            # reads that as the one kind it shows.
+            tuple(record.get("kinds") or ()),
         )
         for record in raw["places"]
     )
