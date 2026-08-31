@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 import type { ForesightDriver, ForesightResponse, GoalSummary } from "@kira/contracts";
 
 import { FanChart } from "../components/FanChart";
@@ -41,50 +43,103 @@ function driverCopy(driver: ForesightDriver, goalNames: Map<string, string>): st
 }
 
 export function Plan({ data, goals = [], isLoading, isError, onDriver }: PlanProps) {
-  if (isLoading || !data) {
-    return (
-      <div className="pad" style={{ paddingTop: 90 }}>
-        <p className="voice" style={{ fontSize: 17 }}>
-          {isError ? "I couldn't reach your forecast just now." : "Looking ahead…"}
-        </p>
-        {isError && (
-          <p style={{ fontSize: 13, color: "var(--muted)" }}>
-            Nothing has changed. Pull down to try again.
-          </p>
-        )}
-      </div>
-    );
-  }
+  const [section, setSection] = useState<"overview" | "foresight">("overview");
 
   const names = new Map(goals.map((goal) => [goal.id, goal.name]));
   const details = new Map(goals.map((goal) => [goal.id, goal]));
-  const notReady = data.profile_days < 14 || data.outlooks.length === 0;
+  const notReady = !data || data.profile_days < 14 || data.outlooks.length === 0;
 
   return (
     <>
       <div className="topbar">
         <div>
           <p className="eyebrow" style={{ margin: 0 }}>Plan</p>
-          <h1>The road ahead</h1>
+          <h1>{section === "overview" ? "Your money, deliberately" : "The road ahead"}</h1>
         </div>
-        <span className="plan-horizon">{data.horizon_days} days</span>
+        {section === "foresight" && data && <span className="plan-horizon">{data.horizon_days} days</span>}
       </div>
 
       <div className="pad">
-        {notReady ? (
+        {section === "overview" ? (
           <Reveal>
-            <section className="plan-empty">
-              <p className="eyebrow" style={{ margin: 0 }}>Still learning</p>
-              <h2>Not enough history to forecast yet.</h2>
+            <section className="plan-empty" aria-label="Plan overview">
+              <p className="eyebrow" style={{ margin: 0 }}>Your commitments and goals</p>
+              <h2>Keep the next move clear.</h2>
               <p>
-                Confirmed spending gives Kira a pattern to learn. Once there is enough of it,
-                this will show a range of plausible futures — not a made-up certainty.
+                Your daily number protects bills, your buffer and the goals you are building toward.
+                Foresight is available when you want to explore possible futures.
               </p>
+              {goals.length > 0 && (
+                <div style={{ display: "grid", gap: 9, marginTop: 18 }}>
+                  {goals.map((goal) => (
+                    <div
+                      key={goal.id}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: 12,
+                        paddingTop: 10,
+                        borderTop: "1px solid rgba(35,52,45,.1)",
+                      }}
+                    >
+                      <span>
+                        <b style={{ display: "block", fontSize: 14 }}>{goal.name}</b>
+                        <small style={{ color: "var(--muted)" }}>
+                          RM{fmt(goal.monthly_sen)} each month
+                        </small>
+                      </span>
+                      <b style={{ fontSize: 13.5, whiteSpace: "nowrap" }}>
+                        RM{fmt(goal.saved_sen)} saved
+                      </b>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <button
+                className="btn btn-primary btn-sm"
+                style={{ marginTop: 20 }}
+                onClick={() => setSection("foresight")}
+              >
+                Open Foresight
+              </button>
             </section>
           </Reveal>
+        ) : isLoading || !data ? (
+          <div style={{ paddingTop: 28 }}>
+            <button className="btn btn-ghost btn-sm" onClick={() => setSection("overview")}>
+              Back to plan
+            </button>
+            <p className="voice" style={{ fontSize: 17, marginTop: 24 }}>
+              {isError ? "I couldn't reach your forecast just now." : "Looking ahead…"}
+            </p>
+            {isError && (
+              <p style={{ fontSize: 13, color: "var(--muted)" }}>
+                Nothing has changed. Pull down to try again.
+              </p>
+            )}
+          </div>
+        ) : notReady ? (
+          <>
+            <button className="btn btn-ghost btn-sm" onClick={() => setSection("overview")}>
+              Back to plan
+            </button>
+            <Reveal style={{ marginTop: 18 }}>
+              <section className="plan-empty">
+                <p className="eyebrow" style={{ margin: 0 }}>Still learning</p>
+                <h2>Not enough history to forecast yet.</h2>
+                <p>
+                  Confirmed spending gives Kira a pattern to learn. Once there is enough of it,
+                  this will show a range of plausible futures — not a made-up certainty.
+                </p>
+              </section>
+            </Reveal>
+          </>
         ) : (
           <>
-            <Reveal>
+            <button className="btn btn-ghost btn-sm" onClick={() => setSection("overview")}>
+              Back to plan
+            </button>
+            <Reveal style={{ marginTop: 18 }}>
               <section className="plan-forecast">
                 <div className="plan-card-head">
                   <div>

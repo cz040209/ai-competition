@@ -262,6 +262,7 @@ describe("App", () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     await user.click(await screen.findByRole("button", { name: /sign in/i }));
     await user.click(await screen.findByRole("button", { name: /^Plan$/i }));
+    await user.click(await screen.findByRole("button", { name: /open foresight/i }));
 
     expect(await screen.findByText("The road ahead")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Today$/i })).toBeInTheDocument();

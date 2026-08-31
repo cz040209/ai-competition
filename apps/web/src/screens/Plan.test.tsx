@@ -70,42 +70,56 @@ function renderPlan(overrides: Partial<Parameters<typeof Plan>[0]> = {}) {
 }
 
 describe("Plan", () => {
-  it("shows a probability for each dated goal", () => {
+  async function openForesight() {
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /open foresight/i }));
+    return user;
+  }
+
+  it("keeps forecasts in a dedicated Foresight section", async () => {
     renderPlan();
+    expect(screen.getByRole("region", { name: /plan overview/i })).toBeInTheDocument();
+    expect(screen.queryByText("62%")).not.toBeInTheDocument();
+
+    await openForesight();
     expect(screen.getByText("62%")).toBeInTheDocument();
     expect(screen.getByText("Emergency top-up")).toBeInTheDocument();
   });
 
-  it("states the assumption next to the number, not in a tooltip", () => {
+  it("states the assumption next to the number, not in a tooltip", async () => {
     renderPlan();
+    await openForesight();
     expect(screen.getByText(/last 90 days/i)).toBeInTheDocument();
     expect(screen.getByText(/not a promise/i)).toBeInTheDocument();
   });
 
-  it("renders one driver card per ranked change", () => {
+  it("renders one driver card per ranked change", async () => {
     renderPlan();
+    await openForesight();
     expect(screen.getAllByRole("button", { name: /let kira do it/i })).toHaveLength(
       FORECAST.drivers.length,
     );
   });
 
-  it("shows what a driver buys, before and after", () => {
+  it("shows what a driver buys, before and after", async () => {
     renderPlan();
+    await openForesight();
     expect(screen.getByText("62% → 91%")).toBeInTheDocument();
   });
 
   it("hands a driver to the Butler instead of applying it", async () => {
     const onDriver = vi.fn();
     renderPlan({ onDriver });
-    const user = userEvent.setup();
+    const user = await openForesight();
 
     await user.click(screen.getAllByRole("button", { name: /let kira do it/i })[0]!);
 
     expect(onDriver).toHaveBeenCalledWith(FORECAST.drivers[0]);
   });
 
-  it("says so plainly when there is not enough history to forecast", () => {
+  it("says so plainly when there is not enough history to forecast", async () => {
     renderPlan({ data: { ...FORECAST, outlooks: [], drivers: [], profile_days: 3 } });
+    await openForesight();
     expect(screen.getByText(/not enough history/i)).toBeInTheDocument();
   });
 });
