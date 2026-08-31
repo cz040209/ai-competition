@@ -60,6 +60,120 @@ class GoalSummaryResponse(ResponseModel):
     note: str
 
 
+GoalType = Literal[
+    "emergency_starter_fund",
+    "upcoming_bill_annual_expense",
+    "travel",
+    "big_purchase",
+    "wedding_event_deposit",
+    "house_down_payment",
+    "car_down_payment",
+    "wedding_fund",
+    "full_emergency_fund",
+    "education_family_goal",
+    "custom_goal",
+]
+GoalPriority = Literal["protected", "important", "flexible"]
+GoalStatus = Literal[
+    "draft", "active", "at_risk", "needs_replan", "paused", "achieved", "cancelled"
+]
+
+
+class GoalCreateRequest(BaseModel):
+    goal_type: GoalType
+    name: str = Field(min_length=1, max_length=80)
+    target_amount_sen: int = Field(strict=True, gt=0)
+    current_saved_sen: int = Field(default=0, strict=True, ge=0)
+    target_date: date
+    priority: GoalPriority = "flexible"
+    funding_account_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
+class GoalDetailResponse(ResponseModel):
+    goal_id: uuid.UUID
+    user_id: uuid.UUID
+    goal_type: GoalType
+    name: str
+    currency: str
+    target_amount_sen: int
+    current_saved_sen: int
+    target_date: date | None
+    horizon: Literal["short", "long"]
+    priority: GoalPriority
+    status: GoalStatus
+    funding_account_ids: list[uuid.UUID]
+    current_plan_version: int | None = None
+
+
+class GoalMilestoneResponse(ResponseModel):
+    percentage: int
+    amount_sen: int
+    projected_date: date
+
+
+class GoalPlanResponse(ResponseModel):
+    plan_id: uuid.UUID
+    goal_id: uuid.UUID
+    version: int
+    approval_status: Literal["draft", "approved", "superseded"]
+    feasible: bool
+    target_amount_sen: int
+    current_saved_sen: int
+    remaining_amount_sen: int
+    target_date: date
+    required_contribution_per_payday_sen: int
+    next_required_reserve_sen: int
+    projected_completion_date: date | None
+    milestones: list[GoalMilestoneResponse]
+    risk_flags: list[str]
+    assumptions: list[str]
+    calculation_version: str
+    evidence_refs: list[str]
+
+
+class GoalCreateResponse(ResponseModel):
+    goal: GoalDetailResponse
+    plan: GoalPlanResponse
+
+
+class GoalScenarioResponse(ResponseModel):
+    scenario_id: uuid.UUID
+    goal_id: uuid.UUID
+    label: str
+    feasible: bool
+    contribution_per_payday_sen: int
+    target_date: date
+    goal_delay_days: int
+    flexible_spending_delta_sen: int
+    tradeoffs: list[str]
+    risk_flags: list[str]
+    calculation_version: str
+    evidence_refs: list[str]
+
+
+class GoalScenariosResponse(ResponseModel):
+    scenarios: list[GoalScenarioResponse]
+
+
+class GoalImpactRequest(BaseModel):
+    proposed_spend_sen: int = Field(strict=True, ge=0)
+
+
+class GoalImpactResponse(ResponseModel):
+    goal_id: uuid.UUID
+    proposed_spend_sen: int
+    safe_to_spend: bool
+    protected_money_touched: bool
+    goal_reserve_shortfall_sen: int
+    projected_completion_date: date | None
+    goal_delay_days: int
+    flexible_spending_remaining_sen: int
+    risk_flags: list[str]
+    assumptions: list[str]
+    calculation_version: str
+    evidence_refs: list[str]
+
+
 class PlaceResponse(ResponseModel):
     """One outing, priced on the distance named by ``distance_basis``.
 

@@ -489,6 +489,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/goals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Goal */
+        post: operations["create_goal_v1_goals_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/goals/{goal_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Goal */
+        get: operations["get_goal_v1_goals__goal_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/goals/{goal_id}/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Goal Plan */
+        get: operations["get_goal_plan_v1_goals__goal_id__plan_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/goals/{goal_id}/scenarios": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Goal Scenarios */
+        post: operations["post_goal_scenarios_v1_goals__goal_id__scenarios_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/goals/{goal_id}/impact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Goal Impact */
+        post: operations["post_goal_impact_v1_goals__goal_id__impact_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -921,6 +1006,225 @@ export interface components {
             places: components["schemas"]["PlaceResponse"][];
             /** Nearest Over Cap */
             nearest_over_cap: components["schemas"]["PlaceResponse"][];
+        };
+        /** GoalCreateRequest */
+        GoalCreateRequest: {
+            /**
+             * Goal Type
+             * @enum {string}
+             */
+            goal_type: "emergency_starter_fund" | "upcoming_bill_annual_expense" | "travel" | "big_purchase" | "wedding_event_deposit" | "house_down_payment" | "car_down_payment" | "wedding_fund" | "full_emergency_fund" | "education_family_goal" | "custom_goal";
+            /** Name */
+            name: string;
+            /** Target Amount Sen */
+            target_amount_sen: number;
+            /**
+             * Current Saved Sen
+             * @default 0
+             */
+            current_saved_sen: number;
+            /**
+             * Target Date
+             * Format: date
+             */
+            target_date: string;
+            /**
+             * Priority
+             * @default flexible
+             * @enum {string}
+             */
+            priority: "protected" | "important" | "flexible";
+            /** Funding Account Ids */
+            funding_account_ids?: string[];
+        };
+        /** GoalCreateResponse */
+        GoalCreateResponse: {
+            goal: components["schemas"]["GoalDetailResponse"];
+            plan: components["schemas"]["GoalPlanResponse"];
+        };
+        /** GoalDetailResponse */
+        GoalDetailResponse: {
+            /**
+             * Goal Id
+             * Format: uuid
+             */
+            goal_id: string;
+            /**
+             * User Id
+             * Format: uuid
+             */
+            user_id: string;
+            /**
+             * Goal Type
+             * @enum {string}
+             */
+            goal_type: "emergency_starter_fund" | "upcoming_bill_annual_expense" | "travel" | "big_purchase" | "wedding_event_deposit" | "house_down_payment" | "car_down_payment" | "wedding_fund" | "full_emergency_fund" | "education_family_goal" | "custom_goal";
+            /** Name */
+            name: string;
+            /** Currency */
+            currency: string;
+            /** Target Amount Sen */
+            target_amount_sen: number;
+            /** Current Saved Sen */
+            current_saved_sen: number;
+            /** Target Date */
+            target_date: string | null;
+            /**
+             * Horizon
+             * @enum {string}
+             */
+            horizon: "short" | "long";
+            /**
+             * Priority
+             * @enum {string}
+             */
+            priority: "protected" | "important" | "flexible";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "draft" | "active" | "at_risk" | "needs_replan" | "paused" | "achieved" | "cancelled";
+            /** Funding Account Ids */
+            funding_account_ids: string[];
+            /** Current Plan Version */
+            current_plan_version?: number | null;
+        };
+        /** GoalImpactRequest */
+        GoalImpactRequest: {
+            /** Proposed Spend Sen */
+            proposed_spend_sen: number;
+        };
+        /** GoalImpactResponse */
+        GoalImpactResponse: {
+            /**
+             * Goal Id
+             * Format: uuid
+             */
+            goal_id: string;
+            /** Proposed Spend Sen */
+            proposed_spend_sen: number;
+            /** Safe To Spend */
+            safe_to_spend: boolean;
+            /** Protected Money Touched */
+            protected_money_touched: boolean;
+            /** Goal Reserve Shortfall Sen */
+            goal_reserve_shortfall_sen: number;
+            /** Projected Completion Date */
+            projected_completion_date: string | null;
+            /** Goal Delay Days */
+            goal_delay_days: number;
+            /** Flexible Spending Remaining Sen */
+            flexible_spending_remaining_sen: number;
+            /** Risk Flags */
+            risk_flags: string[];
+            /** Assumptions */
+            assumptions: string[];
+            /** Calculation Version */
+            calculation_version: string;
+            /** Evidence Refs */
+            evidence_refs: string[];
+        };
+        /** GoalMilestoneResponse */
+        GoalMilestoneResponse: {
+            /** Percentage */
+            percentage: number;
+            /** Amount Sen */
+            amount_sen: number;
+            /**
+             * Projected Date
+             * Format: date
+             */
+            projected_date: string;
+        };
+        /** GoalPlanResponse */
+        GoalPlanResponse: {
+            /**
+             * Plan Id
+             * Format: uuid
+             */
+            plan_id: string;
+            /**
+             * Goal Id
+             * Format: uuid
+             */
+            goal_id: string;
+            /** Version */
+            version: number;
+            /**
+             * Approval Status
+             * @enum {string}
+             */
+            approval_status: "draft" | "approved" | "superseded";
+            /** Feasible */
+            feasible: boolean;
+            /** Target Amount Sen */
+            target_amount_sen: number;
+            /** Current Saved Sen */
+            current_saved_sen: number;
+            /** Remaining Amount Sen */
+            remaining_amount_sen: number;
+            /**
+             * Target Date
+             * Format: date
+             */
+            target_date: string;
+            /** Required Contribution Per Payday Sen */
+            required_contribution_per_payday_sen: number;
+            /** Next Required Reserve Sen */
+            next_required_reserve_sen: number;
+            /** Projected Completion Date */
+            projected_completion_date: string | null;
+            /** Milestones */
+            milestones: components["schemas"]["GoalMilestoneResponse"][];
+            /** Risk Flags */
+            risk_flags: string[];
+            /** Assumptions */
+            assumptions: string[];
+            /** Calculation Version */
+            calculation_version: string;
+            /** Evidence Refs */
+            evidence_refs: string[];
+        };
+        /** GoalScenarioResponse */
+        GoalScenarioResponse: {
+            /**
+             * Scenario Id
+             * Format: uuid
+             */
+            scenario_id: string;
+            /**
+             * Goal Id
+             * Format: uuid
+             */
+            goal_id: string;
+            /** Label */
+            label: string;
+            /** Feasible */
+            feasible: boolean;
+            /** Contribution Per Payday Sen */
+            contribution_per_payday_sen: number;
+            /**
+             * Target Date
+             * Format: date
+             */
+            target_date: string;
+            /** Goal Delay Days */
+            goal_delay_days: number;
+            /** Flexible Spending Delta Sen */
+            flexible_spending_delta_sen: number;
+            /** Tradeoffs */
+            tradeoffs: string[];
+            /** Risk Flags */
+            risk_flags: string[];
+            /** Calculation Version */
+            calculation_version: string;
+            /** Evidence Refs */
+            evidence_refs: string[];
+        };
+        /** GoalScenariosResponse */
+        GoalScenariosResponse: {
+            /** Scenarios */
+            scenarios: components["schemas"]["GoalScenarioResponse"][];
         };
         /** GoalSummaryResponse */
         GoalSummaryResponse: {
@@ -1962,6 +2266,167 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TransactionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_goal_v1_goals_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GoalCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalCreateResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_goal_v1_goals__goal_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                goal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalDetailResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_goal_plan_v1_goals__goal_id__plan_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                goal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalPlanResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_goal_scenarios_v1_goals__goal_id__scenarios_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                goal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalScenariosResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_goal_impact_v1_goals__goal_id__impact_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                goal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GoalImpactRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalImpactResponse"];
                 };
             };
             /** @description Validation Error */
