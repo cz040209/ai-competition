@@ -3,6 +3,8 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { DayPlan, Transaction } from "@kira/contracts";
+
 import { App } from "./App";
 
 const DASHBOARD = {
@@ -25,7 +27,7 @@ const DASHBOARD = {
   goals: [],
 };
 
-const DRAFT = {
+const DRAFT: Transaction = {
   id: "d1",
   merchant: "Nasi Kandar Pelita",
   amount_sen: 1890,
@@ -38,7 +40,7 @@ const DRAFT = {
   note: "Line item total matched.",
 };
 
-const LEDGER_TXN = {
+const LEDGER_TXN: Transaction = {
   id: "t1",
   merchant: "Grab — KLCC to home",
   amount_sen: 1620,
@@ -84,10 +86,48 @@ const FORESIGHT = {
   assumption: "Based on your last 90 days of confirmed spending. It is a projection, not a promise.",
 };
 
+/** Typed against the contract on purpose: an untyped literal here would go on
+ *  compiling after the API grew a field, and the shell would be exercised
+ *  against a response the API cannot send. The counts are what tell the three
+ *  empty lists apart, so they are stated too. */
+const DAY_PLAN: DayPlan = {
+  room_sen: 5297,
+  cap_sen: 5297,
+  kind: null,
+  nearby_count: 1,
+  matching_count: 1,
+  kind_count: 1,
+  places: [
+    {
+      id: "p1",
+      name: "Nasi Kandar Pelita",
+      kind: "Mamak",
+      address: "166 Jalan Ampang, 50450 Kuala Lumpur",
+      lat: 3.1591,
+      lng: 101.7132,
+      km: 0.65,
+      road_km: 0.65,
+      distance_basis: "road",
+      travel_sen: 0,
+      minutes: 14,
+      total_sen: 1250,
+      share: 0.24,
+      band: "ok",
+      confidence: "high",
+      note: "Fast counter service, open late.",
+      halal: true,
+    },
+  ],
+  nearest_over_cap: [],
+};
+
 /** Mutable so a test can prove the screens re-read after a confirm. */
 let activity = ACTIVITY;
 let dashboard = DASHBOARD;
 let asked: (string | null)[] = [];
+/** What a correction actually put on the wire, and how often Today re-read. */
+let corrected: unknown = null;
+let dashboardReads = 0;
 
 function renderApp() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -102,10 +142,12 @@ beforeEach(() => {
   activity = ACTIVITY;
   dashboard = DASHBOARD;
   asked = [];
+  corrected = null;
+  dashboardReads = 0;
   vi.useFakeTimers({ shouldAdvanceTime: true });
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (input: RequestInfo | URL) => {
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith("/v1/auth/refresh")) return new Response("", { status: 401 });
       if (url.endsWith("/v1/auth/login")) {
@@ -146,6 +188,7 @@ beforeEach(() => {
         });
       }
       if (url.endsWith("/v1/dashboard/today")) {
+        dashboardReads += 1;
         return new Response(JSON.stringify(dashboard), {
           status: 200,
           headers: { "content-type": "application/json" },
@@ -153,6 +196,16 @@ beforeEach(() => {
       }
       if (url.endsWith("/v1/foresight")) {
         return new Response(JSON.stringify(FORESIGHT), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith(`/v1/transactions/${DRAFT.id}`) && init?.method === "PATCH") {
+        corrected = JSON.parse(String(init.body));
+        // The API clears the confidence on any amount it did not read itself.
+        const draft = { ...DRAFT, ...(corrected as object), confidence: null };
+        activity = { ...ACTIVITY, drafts: [draft], draft_total_sen: draft.amount_sen };
+        return new Response(JSON.stringify(draft), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
@@ -181,6 +234,12 @@ beforeEach(() => {
         activity = { ...ACTIVITY, drafts: [], draft_total_sen: 0 };
         dashboard = { ...DASHBOARD, safe_today_sen: 3321, drafts_waiting: 0 };
         return new Response(JSON.stringify({ ...DRAFT, status: "confirmed" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.includes("/v1/day-plan/places")) {
+        return new Response(JSON.stringify(DAY_PLAN), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
@@ -233,6 +292,30 @@ describe("App", () => {
     expect(await screen.findByLabelText("RM33.21")).toBeInTheDocument();
   });
 
+  it("corrects a misread amount in sen, and re-reads both screens", async () => {
+    renderApp();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    await user.click(await screen.findByRole("button", { name: /sign in/i }));
+    await user.click(await screen.findByRole("button", { name: /^Activity$/i }));
+    await user.click(await screen.findByRole("button", { name: "Details" }));
+    const readsBefore = dashboardReads;
+
+    await user.click(screen.getByRole("button", { name: "Correct" }));
+    const field = screen.getByLabelText("Amount in ringgit");
+    await user.clear(field);
+    await user.type(field, "19.90");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    // Ringgit on screen, sen on the wire.
+    await waitFor(() => expect(corrected).toEqual({ amount_sen: 1990 }));
+    // The ledger re-reads, so the corrected figure replaces what was heard,
+    // in the card's head and in the details row it was typed into…
+    await waitFor(() => expect(screen.getAllByText("RM19.90")).toHaveLength(2));
+    expect(screen.getByText(/Your figure, not a read/)).toBeInTheDocument();
+    // …and so does Today, which no safe-to-spend may outlive.
+    await waitFor(() => expect(dashboardReads).toBeGreaterThan(readsBefore));
+  });
+
   it("opens a ledger row and moves it back to the drafts", async () => {
     renderApp();
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
@@ -266,6 +349,16 @@ describe("App", () => {
 
     expect(await screen.findByText("The road ahead")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Today$/i })).toBeInTheDocument();
+  });
+
+  it("reaches the day planner from the plan overview", async () => {
+    renderApp();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    await user.click(await screen.findByRole("button", { name: /sign in/i }));
+    await user.click(await screen.findByRole("button", { name: /^Plan$/i }));
+    await user.click(await screen.findByRole("button", { name: /open day planner/i }));
+
+    await waitFor(() => expect(screen.getByText(/What today's money can buy/i)).toBeInTheDocument());
   });
 });
 

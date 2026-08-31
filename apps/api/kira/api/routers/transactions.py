@@ -8,7 +8,12 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, status
 
 from kira.api.deps import CurrentUser, SessionDep
-from kira.api.schemas import ActivityResponse, CreateTransactionRequest, TransactionResponse
+from kira.api.schemas import (
+    ActivityResponse,
+    CorrectTransactionRequest,
+    CreateTransactionRequest,
+    TransactionResponse,
+)
 from kira.services.transactions import (
     Activity,
     AlreadySettled,
@@ -17,6 +22,7 @@ from kira.services.transactions import (
     TransactionNotFound,
     TransactionView,
     confirm_draft,
+    correct_draft,
     create_transaction,
     discard_draft,
     list_activity,
@@ -31,6 +37,12 @@ SETTLED = HTTPException(
 )
 NOT_CONFIRMED = HTTPException(
     status_code=status.HTTP_409_CONFLICT, detail="That transaction is not on the ledger"
+)
+# Deliberately not the SETTLED wording: a caller trying to fix a figure needs to
+# be told the way back to a row it may fix, not just that this one is shut.
+NOT_A_DRAFT = HTTPException(
+    status_code=status.HTTP_409_CONFLICT,
+    detail="Only a draft can be corrected. Unconfirm it first, then correct it.",
 )
 
 
@@ -61,6 +73,38 @@ async def post_transaction(
             confidence=body.confidence,
             note=body.note,
         )
+    except InvalidTransaction as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+    await session.commit()
+    return view
+
+
+@router.patch("/{transaction_id}", response_model=TransactionResponse)
+async def patch_transaction(
+    transaction_id: uuid.UUID,
+    body: CorrectTransactionRequest,
+    user: CurrentUser,
+    session: SessionDep,
+) -> TransactionView:
+    """Correct a draft that was read wrong. Nothing already settled is editable.
+
+    No audit event: neither create nor any of the settle paths below writes one,
+    and a lone entry for corrections would read as a complete trail that is not.
+    """
+    try:
+        view = await correct_draft(
+            session,
+            user,
+            transaction_id,
+            merchant=body.merchant,
+            amount_sen=body.amount_sen,
+            category=body.category,
+            note=body.note,
+        )
+    except TransactionNotFound as exc:
+        raise NOT_FOUND from exc
+    except AlreadySettled as exc:
+        raise NOT_A_DRAFT from exc
     except InvalidTransaction as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     await session.commit()

@@ -29,6 +29,12 @@ services:
       # the approvals and the evidence are identical, only the prose differs.
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
       BUTLER_MODEL: ${BUTLER_MODEL:-qwen-plus}
+      # Road distances for the day planner. Off, or with the router unreachable
+      # from the venue, every place comes back labelled "straight line" and the
+      # screen says so rather than quoting a fare it cannot stand behind.
+      ROUTING_ENABLED: ${ROUTING_ENABLED:-true}
+      OSRM_BASE_URL: ${OSRM_BASE_URL:-https://router.project-osrm.org}
+      ROUTING_TIMEOUT_SECONDS: ${ROUTING_TIMEOUT_SECONDS:-2.5}
     ports:
       - "${KIRA_PORT:-8001}:8000"
     healthcheck:

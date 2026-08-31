@@ -140,12 +140,18 @@ async def settle(
     *,
     applied: bool,
     args: dict[str, Any] | None = None,
+    summary: str | None = None,
     audit_event_id: uuid.UUID | None = None,
 ) -> ButlerApproval:
     if approval.status != APPROVAL_PENDING:
         raise ApprovalSettled(approval.status)
     if args is not None:
         approval.args = args
+    # The row is the readable record of what happened, so its sentence has to
+    # describe the arguments beside it. An edited approval settles with both,
+    # never with the proposal's wording over the decision's arguments.
+    if summary is not None:
+        approval.summary = summary
     approval.status = APPROVAL_APPLIED if applied else APPROVAL_REJECTED
     approval.decided_at = datetime.now(tz=UTC)
     approval.audit_event_id = audit_event_id

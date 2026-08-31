@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     butler_max_tool_iterations: int = 6
     butler_request_timeout_seconds: float = 30.0
     butler_memory_limit: int = 40
+    # The Plan screen's ask box. Far shorter than the Butler's own timeout above,
+    # because the two are waited on differently: a conversation may take its time
+    # and shows tokens arriving, where this one holds a screen of live figures
+    # still and has nothing to show while it does.
+    day_plan_interpret_timeout_seconds: float = 6.0
     # Voice and camera capture. Off means the affordances stay hidden rather
     # than pretending to work; the adapters behind them are chosen in the
     # adapter registry, not here.
@@ -50,6 +55,18 @@ class Settings(BaseSettings):
     worker_timezone: str = "Asia/Kuala_Lumpur"
     worker_hour: int = Field(default=5, ge=0, le=23)
     worker_minute: int = Field(default=0, ge=0, le=59)
+
+    # ── Routing ───────────────────────────────────────────────────────────────
+    # A Grab fare is charged on the road, not on the great circle: Bangsar to a
+    # shop 3.7 km away in a straight line is 8.1 km of driving, and quoting the
+    # straight line understates that trip by about half. OSRM is asked for the
+    # road figure; off, or unconfigured, or unreachable, the planner falls back
+    # to the straight line and every place it returns is labelled as such.
+    routing_enabled: bool = True
+    osrm_base_url: str = "https://router.project-osrm.org"
+    # Short on purpose. The public router is volunteer-run and owes us nothing,
+    # and a page that states today's money must not hang waiting on it.
+    routing_timeout_seconds: float = 2.5
 
     @field_validator("cors_origins", mode="before")
     @classmethod

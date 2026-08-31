@@ -210,9 +210,12 @@ async def create_transaction(
     return _view(txn)
 
 
-async def get_transaction(
-    session: AsyncSession, user: User, transaction_id: uuid.UUID
-) -> TransactionView:
+async def _owned(session: AsyncSession, user: User, transaction_id: uuid.UUID) -> Transaction:
+    """One of this user's transactions, or nothing at all.
+
+    Every path that touches a single row goes through here, so another user's
+    transaction is indistinguishable from one that does not exist.
+    """
     txn = (
         await session.execute(
             select(Transaction).where(
@@ -222,6 +225,60 @@ async def get_transaction(
     ).scalar_one_or_none()
     if txn is None:
         raise TransactionNotFound(str(transaction_id))
+    return txn
+
+
+async def get_transaction(
+    session: AsyncSession, user: User, transaction_id: uuid.UUID
+) -> TransactionView:
+    return _view(await _owned(session, user, transaction_id))
+
+
+async def correct_draft(
+    session: AsyncSession,
+    user: User,
+    transaction_id: uuid.UUID,
+    *,
+    merchant: str | None = None,
+    amount_sen: int | None = None,
+    category: str | None = None,
+    note: str | None = None,
+) -> TransactionView:
+    """Fix what a draft says before it is counted. Drafts only, never the ledger.
+
+    Every field is optional and ``None`` means "leave it": a caller fixing one
+    misread amount does not have to restate the rest of the row, and cannot
+    blank a field by omitting it.
+
+    A confirmed row is refused rather than edited. Correcting one in place would
+    move money that safe-to-spend has already reported, with nothing on the row
+    to say it moved; ``unconfirm`` is the way back to something editable.
+
+    Correcting the amount clears ``confidence``. A reader 71% sure of RM14.00 is
+    not 71% sure of the RM19.90 the user typed over it — the figure is the
+    user's now, and a UI that kept underlining it would be doubting the human.
+    """
+    if merchant is None and amount_sen is None and category is None and note is None:
+        raise InvalidTransaction("a correction needs at least one field")
+    if merchant is not None and not merchant.strip():
+        raise InvalidTransaction("a transaction needs a merchant")
+    if amount_sen is not None and amount_sen <= 0:
+        raise InvalidTransaction("a transaction needs a positive amount")
+
+    txn = await _owned(session, user, transaction_id)
+    if txn.status != TXN_DRAFT:
+        raise AlreadySettled(txn.status)
+
+    if merchant is not None:
+        txn.merchant = merchant.strip()
+    if amount_sen is not None:
+        txn.amount = Money(amount_sen, txn.amount.currency)
+        txn.confidence = None
+    if category is not None:
+        txn.category = category
+    if note is not None:
+        txn.note = note
+    await session.flush()
     return _view(txn)
 
 
@@ -235,15 +292,7 @@ async def _move(
     refusal: type[Exception],
 ) -> TransactionView:
     """Move one of the user's transactions between statuses, or refuse to."""
-    txn = (
-        await session.execute(
-            select(Transaction).where(
-                Transaction.id == transaction_id, Transaction.user_id == user.id
-            )
-        )
-    ).scalar_one_or_none()
-    if txn is None:
-        raise TransactionNotFound(str(transaction_id))
+    txn = await _owned(session, user, transaction_id)
     if txn.status != expected:
         raise refusal(txn.status)
     txn.status = to

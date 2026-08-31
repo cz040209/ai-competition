@@ -36,7 +36,14 @@ async def load_snapshot(session: AsyncSession, user: User, today: date) -> Snaps
     commitments = (
         await session.execute(select(Commitment).where(Commitment.user_id == user.id))
     ).scalars().all()
-    goals = (await session.execute(select(Goal).where(Goal.user_id == user.id))).scalars().all()
+    goals = (
+        await session.execute(
+            select(Goal).where(
+                Goal.user_id == user.id,
+                Goal.status.in_(("active", "at_risk", "needs_replan")),
+            )
+        )
+    ).scalars().all()
 
     return Snapshot(
         balance=opening - spent_all_time,

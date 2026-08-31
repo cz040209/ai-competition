@@ -2,8 +2,9 @@
 
     START
       → load_context
-      → agent  →  guard  →  tools       (reads; on to compose)
-                  guard  →  approval    (writes; interrupt())
+      → agent → insist  ⇄  guard  →  tools       (reads; on to compose)
+                           guard  →  approval    (writes; interrupt())
+                           guard  →  agent       (all refused, nothing ran; once)
       → compose
       → extract_memory
       → END
@@ -11,6 +12,10 @@
 The shape is the argument. Reads answer straight through — only a refusal is
 worth a second pass — writes leave the loop, and the only path from a write tool
 to the database runs through a user's decision.
+
+`insist` is the one place a tool call is made by the app rather than proposed
+by the model, and it is deliberately upstream of the guard: a call this app
+adds is checked exactly as hard as one the model asked for.
 """
 
 from __future__ import annotations
@@ -28,6 +33,7 @@ from kira.agent.nodes.compose import compose
 from kira.agent.nodes.context import load_context
 from kira.agent.nodes.execute import tools
 from kira.agent.nodes.guard import guard, route_after_guard, route_after_tools
+from kira.agent.nodes.insist import insist
 from kira.agent.nodes.memory import extract_memory
 from kira.agent.nodes.reason import agent
 from kira.agent.state import ButlerContext, ButlerState
@@ -38,6 +44,7 @@ def build_graph(checkpointer: BaseCheckpointSaver | None = None):
 
     builder.add_node("load_context", load_context)
     builder.add_node("agent", agent)
+    builder.add_node("insist", insist)
     builder.add_node("guard", guard)
     builder.add_node("tools", tools)
     builder.add_node("approval", approval)
@@ -46,11 +53,15 @@ def build_graph(checkpointer: BaseCheckpointSaver | None = None):
 
     builder.add_edge(START, "load_context")
     builder.add_edge("load_context", "agent")
-    builder.add_edge("agent", "guard")
+    builder.add_edge("agent", "insist")
+    builder.add_edge("insist", "guard")
+    # Back to `agent` is the fourth way out, and the narrow one: every call
+    # this pass proposed was refused and nothing has run, so the turn would
+    # otherwise compose from no evidence. See `route_after_guard`.
     builder.add_conditional_edges(
         "guard",
         route_after_guard,
-        {"tools": "tools", "approval": "approval", "compose": "compose"},
+        {"tools": "tools", "approval": "approval", "compose": "compose", "agent": "agent"},
     )
     # A batch holding both reads and a write executes the reads first, then
     # stops at the write — so the approval card is asked with its evidence

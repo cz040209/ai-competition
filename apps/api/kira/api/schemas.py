@@ -60,6 +60,281 @@ class GoalSummaryResponse(ResponseModel):
     note: str
 
 
+GoalType = Literal[
+    "emergency_starter_fund",
+    "upcoming_bill_annual_expense",
+    "travel",
+    "big_purchase",
+    "wedding_event_deposit",
+    "house_down_payment",
+    "car_down_payment",
+    "wedding_fund",
+    "full_emergency_fund",
+    "education_family_goal",
+    "custom_goal",
+]
+GoalPriority = Literal["protected", "important", "flexible"]
+GoalStatus = Literal[
+    "draft", "active", "at_risk", "needs_replan", "paused", "achieved", "cancelled"
+]
+
+
+class GoalCreateRequest(BaseModel):
+    goal_type: GoalType
+    name: str = Field(min_length=1, max_length=80)
+    target_amount_sen: int = Field(strict=True, gt=0)
+    current_saved_sen: int = Field(default=0, strict=True, ge=0)
+    target_date: date
+    priority: GoalPriority = "flexible"
+    funding_account_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
+class GoalDetailResponse(ResponseModel):
+    goal_id: uuid.UUID
+    user_id: uuid.UUID
+    goal_type: GoalType
+    name: str
+    currency: str
+    target_amount_sen: int
+    current_saved_sen: int
+    target_date: date | None
+    horizon: Literal["short", "long"]
+    priority: GoalPriority
+    status: GoalStatus
+    funding_account_ids: list[uuid.UUID]
+    current_plan_version: int | None = None
+
+
+class GoalMilestoneResponse(ResponseModel):
+    percentage: int
+    amount_sen: int
+    projected_date: date
+
+
+class GoalPlanResponse(ResponseModel):
+    plan_id: uuid.UUID
+    goal_id: uuid.UUID
+    version: int
+    approval_status: Literal["draft", "approved", "superseded"]
+    feasible: bool
+    target_amount_sen: int
+    current_saved_sen: int
+    remaining_amount_sen: int
+    target_date: date
+    required_contribution_per_payday_sen: int
+    next_required_reserve_sen: int
+    projected_completion_date: date | None
+    milestones: list[GoalMilestoneResponse]
+    risk_flags: list[str]
+    assumptions: list[str]
+    calculation_version: str
+    evidence_refs: list[str]
+
+
+class GoalCreateResponse(ResponseModel):
+    goal: GoalDetailResponse
+    plan: GoalPlanResponse
+
+
+class GoalScenarioResponse(ResponseModel):
+    scenario_id: uuid.UUID
+    goal_id: uuid.UUID
+    label: str
+    feasible: bool
+    contribution_per_payday_sen: int
+    target_date: date
+    goal_delay_days: int
+    flexible_spending_delta_sen: int
+    tradeoffs: list[str]
+    risk_flags: list[str]
+    calculation_version: str
+    evidence_refs: list[str]
+
+
+class GoalScenariosResponse(ResponseModel):
+    scenarios: list[GoalScenarioResponse]
+
+
+class GoalImpactRequest(BaseModel):
+    proposed_spend_sen: int = Field(strict=True, ge=0)
+
+
+class GoalImpactResponse(ResponseModel):
+    goal_id: uuid.UUID
+    proposed_spend_sen: int
+    safe_to_spend: bool
+    protected_money_touched: bool
+    goal_reserve_shortfall_sen: int
+    projected_completion_date: date | None
+    goal_delay_days: int
+    flexible_spending_remaining_sen: int
+    risk_flags: list[str]
+    assumptions: list[str]
+    calculation_version: str
+    evidence_refs: list[str]
+
+
+class PlaceResponse(ResponseModel):
+    """One outing, priced on the distance named by ``distance_basis``.
+
+    A fare is charged on the road, so ``km`` is the road distance whenever the
+    router answered for this place. Where it did not, ``km`` falls back to the
+    great circle, ``road_km`` is null, and ``distance_basis`` says
+    ``straight_line`` -- which the screen has to show, because a straight-line
+    ride fare in Kuala Lumpur can be half of the real one. The basis is
+    per-place: one search routes some destinations and fails on others.
+    """
+
+    id: str
+    name: str
+    kind: str
+    address: str
+    # The point itself, because the address alone does not always find it: a
+    # quarter of them name a locality rather than a doorstep, and several names
+    # in the set belong to two branches. A client sending the user to a map has
+    # to be able to send them to this one.
+    lat: float
+    lng: float
+    km: float
+    road_km: float | None
+    distance_basis: Literal["road", "straight_line"]
+    travel_sen: int
+    minutes: int
+    total_sen: int
+    # Null on a day with no room left, so no client can turn a stand-in ratio
+    # into a percentage or divide its way back to a room that is not there.
+    share: float | None
+    band: Literal["ok", "tight", "over"]
+    confidence: str
+    halal: bool
+    note: str
+
+
+class DayPlanResponse(ResponseModel):
+    """The places, and the figures they were judged against.
+
+    ``room_sen`` is stated rather than left to be inferred from ``share``: it
+    is zero on a day already spent out, and a client dividing to recover it
+    would turn that zero into a number the user never had.
+
+    ``nearby_count`` is how many places the radius held before any filter ran,
+    ``matching_count`` how many were still standing after the halal filter, and
+    ``kind_count`` how many of those were the kind of food that was asked for —
+    all three before the ceiling. Without them, an empty ``places`` is
+    unreadable: a client would have to guess which of four causes emptied it,
+    and would blame the ceiling for a distance no ceiling can close, for a
+    halal toggle no ceiling can reach, or for there being no noodles in this
+    part of town. The counts nest, so the first of them that is nil is the
+    cause.
+
+    ``kind`` is the food filter this list was actually built with, echoed back.
+    Null means none was asked for. A client reads it rather than its own state
+    for the same reason it reads ``cap_sen``: while a newly tapped filter is in
+    flight, its own state describes a list that has not arrived yet.
+
+    ``nearest_over_cap`` is the cheapest few places the ceiling turned away, and
+    it is only ever non-empty when ``places`` is empty. It is a separate field
+    rather than extra rows in ``places`` precisely so that no client can render
+    it as though it had fitted: every place in it costs more than ``cap_sen``,
+    each carries ``band: "over"`` to say so on the row itself, and a client that
+    shows them owes the user a heading that says what they are. Every other
+    filter still holds over it — halal is still halal and ``kind`` is still that
+    kind — so the ceiling is the only thing relaxed, and only to say what the
+    money would have to stretch to.
+    """
+
+    room_sen: int
+    cap_sen: int
+    kind: str | None
+    nearby_count: int
+    matching_count: int
+    kind_count: int
+    places: list[PlaceResponse]
+    # Required rather than optional, and empty on almost every response. A field
+    # a client may find missing is a field a client will forget to read, and the
+    # one list it must never quietly omit is this one.
+    nearest_over_cap: list[PlaceResponse]
+
+
+class PlanDraftRequest(BaseModel):
+    """A place the user tapped "Add to today" on, as the row showed it.
+
+    ``total_sen`` is the whole outing — meal plus travel — because that is the
+    single figure on the row and in the sheet's total. Sending the meal alone
+    would put a draft on screen that is not the thing the user added.
+
+    ``confidence`` is the place's own band, not a percentage: what "high" is
+    worth is the server's to decide, so two clients cannot come to different
+    answers about it. It is typed as a plain string rather than an enum because
+    the bands come from a curated data file that is regenerated, and a word this
+    build has not seen should cost the user their tap the least — the service
+    reads an unfamiliar one as the least certain band.
+    """
+
+    name: str = Field(min_length=1, max_length=120)
+    total_sen: int = Field(gt=0)
+    confidence: str = Field(min_length=1, max_length=16)
+
+
+class DayPlanFilters(ResponseModel):
+    """The Plan screen's controls, in one shape.
+
+    The same shape goes both ways: it is the state the screen is in when it
+    asks, and the state it should be in afterwards. ``lat``/``lng`` travel with
+    it because a ceiling means nothing without knowing where the list was
+    measured from — but they are only ever echoed back, never rewritten. See
+    ``DayPlanInterpretResponse``.
+    """
+
+    lat: float
+    lng: float
+    mode: Literal["walk", "transit", "ride"] = "walk"
+    halal_only: bool = False
+    # Null means the screen is carrying no ceiling of its own and today's
+    # safe-to-spend is standing in for one.
+    cap_sen: int | None = Field(default=None, gt=0)
+    # One kind of food, or null for every kind. Only ever a word the curated
+    # set actually carries: a sentence read as some other category is left
+    # unapplied and reported in ``unread``, because a filter that can match
+    # nothing is not a reading of anything.
+    kind: str | None = Field(default=None, max_length=40)
+    sort: Literal["balanced", "cheapest", "closest"] = "balanced"
+
+
+class DayPlanInterpretRequest(DayPlanFilters):
+    """One sentence, and the controls it is to be read against.
+
+    The current state is sent with the sentence rather than assumed, because
+    most sentences only speak to one or two controls and the rest have to come
+    back untouched.
+    """
+
+    text: str = Field(min_length=1, max_length=280)
+
+
+class DayPlanInterpretResponse(ResponseModel):
+    """What the sentence came to, and whether any of it may be applied.
+
+    ``filters`` is the whole new control state or it is null. There is no
+    partial answer: a client that applied half of a request would be showing a
+    list the user reads as the answer to all of it.
+
+    ``understood`` is the short line to show back, so a misreading is visible
+    and can be corrected by tapping the chip it got wrong. It is built from the
+    filters themselves, so it cannot describe a setting other than the one
+    being applied. ``unread`` is whatever part of the sentence produced no
+    filter — a place name, most often, since the origin is not the model's to
+    set. ``reason`` says why nothing was applied, and is empty when something
+    was.
+    """
+
+    applied: bool
+    filters: DayPlanFilters | None
+    understood: str
+    unread: str
+    reason: str
+
+
 class DashboardTodayResponse(ResponseModel):
     date: date
     display_name: str
@@ -284,3 +559,16 @@ class BriefingInboxResponse(ResponseModel):
     summary: str
     proposal_count: int
     pending_proposal_count: int
+class CorrectTransactionRequest(BaseModel):
+    """What the user says a draft should have read. Every field is optional.
+
+    Omitted means "leave it alone", which is why nothing here defaults to a
+    value: a body carrying only ``amount_sen`` must not blank the merchant.
+    ``confidence`` is absent on purpose — it is the reader's own figure, and a
+    corrected amount clears it rather than letting a client restate it.
+    """
+
+    merchant: str | None = Field(default=None, min_length=1, max_length=120)
+    amount_sen: int | None = Field(default=None, gt=0)
+    category: str | None = Field(default=None, max_length=40)
+    note: str | None = Field(default=None, max_length=280)

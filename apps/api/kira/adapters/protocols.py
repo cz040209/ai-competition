@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 from typing import Protocol, runtime_checkable
@@ -38,6 +39,24 @@ class Place:
     confidence: str
     halal: bool
     note: str
+    # Where it actually is, in words. A place named on a screen that quotes a
+    # fare to get there has to be findable, and coordinates are not an address.
+    # Defaulted so the small worlds the tests build stay readable.
+    address: str = ""
+    # Every kind of food this place serves, ``kind`` first. OpenStreetMap lets
+    # one place carry several cuisines and a fifth of the tagged places in KL
+    # do -- Nando's is chicken and portuguese, Jake's Charbroil is a steakhouse
+    # and seafood -- so a place that serves two things has to be findable by
+    # either. ``kind`` above stays the single word a row is labelled with and
+    # the one its estimate was banded from; this is for matching only.
+    kinds: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        # Never empty, so nothing downstream has to remember a fallback: a
+        # place with one cuisine carries a one-word tuple of its own kind, and
+        # every caller can read ``kinds`` and be reading the whole truth.
+        if not self.kinds:
+            object.__setattr__(self, "kinds", (self.kind,))
 
 
 @runtime_checkable
@@ -53,6 +72,26 @@ class VoiceAdapter(Protocol):
 @runtime_checkable
 class MapsAdapter(Protocol):
     def places_near(self, lat: float, lng: float, radius_km: float) -> list[Place]: ...
+
+
+@runtime_checkable
+class RoutingAdapter(Protocol):
+    """Distance along the roads, which is the only distance a fare is charged on.
+
+    One origin, many destinations, one call: the planner asks about every
+    candidate it is going to price at once, because a per-place round trip to a
+    router is a page that loads at the speed of the slowest one.
+
+    The answer is one entry per destination, in the order they were given, and
+    ``None`` wherever this destination could not be routed. An answer that is
+    all ``None`` is the router saying nothing at all -- off, unreachable, or
+    refusing -- and the caller falls back to the straight line and says so. It
+    is a normal state, not an error: implementations do not raise.
+    """
+
+    async def road_metres(
+        self, origin: tuple[float, float], destinations: Sequence[tuple[float, float]]
+    ) -> list[float | None]: ...
 
 
 @runtime_checkable

@@ -2,119 +2,56 @@
 
 from __future__ import annotations
 
-import math
+import json
+from collections.abc import Sequence
 from datetime import date
+from importlib.resources import files
 
+from kira.adapters.geo import haversine_km
 from kira.adapters.protocols import Place, ReceiptRead, VoiceRead
 from kira.money import Money
 
 DEMO_DATE = date(2026, 9, 3)
 
+
+def _load_kl_places() -> tuple[Place, ...]:
+    """Read the curated KL set that ships inside the package.
+
+    Eight hand-written places only covered the few hundred metres around KLCC,
+    so the planner returned nothing for anyone standing anywhere else in the
+    city. The set is a data file rather than a literal because it is generated
+    (scripts/fetch-kl-places.py) and refreshed; ``importlib.resources`` reads it
+    from the installed package, not from a path that only exists in a checkout.
+    """
+    raw = json.loads(
+        (files("kira.adapters") / "data" / "kl_places.json").read_text(encoding="utf-8")
+    )
+    return tuple(
+        Place(
+            record["id"],
+            record["name"],
+            record["kind"],
+            record["lat"],
+            record["lng"],
+            # Estimates are stored as whole sen, so they stay integer money the
+            # whole way in -- no float ever touches this path.
+            Money(record["estimate_sen"]),
+            record["confidence"],
+            record["halal"],
+            record["note"],
+            record["address"],
+            # Every cuisine OSM states for the place, display kind first. A
+            # record from before the field existed carries none, and Place
+            # reads that as the one kind it shows.
+            tuple(record.get("kinds") or ()),
+        )
+        for record in raw["places"]
+    )
+
+
 # Places APIs expose a price band, not menu prices. These estimates are curated
 # and labelled so the UI cannot imply that a provider returned a real price.
-KL_PLACES: tuple[Place, ...] = (
-    Place(
-        "p1",
-        "Nasi Kandar Pelita",
-        "Mamak",
-        3.1596,
-        101.7181,
-        Money(1250),
-        "high",
-        True,
-        "Fast counter service, open late.",
-    ),
-    Place(
-        "p2",
-        "Zus Coffee, Jln Ampang",
-        "Cafe",
-        3.1589,
-        101.7145,
-        Money(900),
-        "high",
-        True,
-        "Coffee and a pastry, not a full meal.",
-    ),
-    Place(
-        "p3",
-        "Suria KLCC food court",
-        "Food court",
-        3.1577,
-        101.7120,
-        Money(1800),
-        "medium",
-        True,
-        "Widest choice, busiest at 12:30.",
-    ),
-    Place(
-        "p4",
-        "Chee Meng Chicken Rice",
-        "Chinese",
-        3.1571,
-        101.7156,
-        Money(1600),
-        "medium",
-        False,
-        "Small shop, queue moves quickly.",
-    ),
-    Place(
-        "p5",
-        "Nasi Lemak Antarabangsa",
-        "Malay",
-        3.1652,
-        101.7042,
-        Money(1100),
-        "high",
-        True,
-        "Kampung Baru institution.",
-    ),
-    Place(
-        "p6",
-        "Sushi Zanmai KLCC",
-        "Japanese",
-        3.1580,
-        101.7118,
-        Money(4600),
-        "low",
-        True,
-        "Menu prices are not published online.",
-    ),
-    Place(
-        "p7",
-        "Lot 10 Hutong",
-        "Hawker hall",
-        3.1465,
-        101.7106,
-        Money(2200),
-        "medium",
-        False,
-        "Heritage stalls in one basement.",
-    ),
-    Place(
-        "p8",
-        "Village Grocer KLCC",
-        "Groceries",
-        3.1575,
-        101.7124,
-        Money(3500),
-        "low",
-        True,
-        "Cook at home instead of eating out.",
-    ),
-)
-
-
-def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
-    """Return great-circle distance for coordinates, where floats are appropriate."""
-    radius = 6371.0
-    rad = math.pi / 180
-    d_lat = (lat2 - lat1) * rad
-    d_lng = (lng2 - lng1) * rad
-    h = (
-        math.sin(d_lat / 2) ** 2
-        + math.cos(lat1 * rad) * math.cos(lat2 * rad) * math.sin(d_lng / 2) ** 2
-    )
-    return 2 * radius * math.asin(math.sqrt(h))
+KL_PLACES: tuple[Place, ...] = _load_kl_places()
 
 
 class FakeOcr:
@@ -142,12 +79,36 @@ class FakeVoice:
 
 
 class FakeMaps:
+    def __init__(self, places: tuple[Place, ...] | None = None) -> None:
+        """Serve the shipped set unless a caller hands over its own.
+
+        Tests inject a small fixed world so their scenarios describe behaviour
+        rather than whatever the last data refresh happened to put near KLCC.
+        """
+        self._places = KL_PLACES if places is None else places
+
     def places_near(self, lat: float, lng: float, radius_km: float) -> list[Place]:
         return [
             place
-            for place in KL_PLACES
+            for place in self._places
             if haversine_km(lat, lng, place.lat, place.lng) <= radius_km
         ]
+
+
+class NoRouting:
+    """A router that answers nothing, for when there is no router.
+
+    Not a stub that pretends: it is the offline half of a two-state feature.
+    Every destination comes back ``None``, the planner falls back to the
+    straight line, and each place it returns says ``straight_line`` so the
+    screen can too. Tests run on this by default, which is what keeps the suite
+    off the network and its fares reproducible.
+    """
+
+    async def road_metres(
+        self, origin: tuple[float, float], destinations: Sequence[tuple[float, float]]
+    ) -> list[float | None]:
+        return [None] * len(destinations)
 
 
 class InMemoryStorage:

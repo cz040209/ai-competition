@@ -22,7 +22,9 @@ from kira.api.routers import (
     capture,
     categories,
     dashboard,
+    day_plan,
     foresight,
+    goals,
     transactions,
 )
 from kira.config import get_settings
@@ -100,6 +102,8 @@ def create_app(*, static_dir: Path | None = None) -> FastAPI:
     app.include_router(categories.router)
     app.include_router(foresight.router)
     app.include_router(briefings.router)
+    app.include_router(day_plan.router)
+    app.include_router(goals.router)
 
     # In the shipped image the built bundle sits beside the package. In
     # development it is absent and Vite serves the UI instead, so this is

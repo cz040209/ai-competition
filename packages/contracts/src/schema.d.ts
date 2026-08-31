@@ -147,6 +147,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/transactions/{transaction_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Patch Transaction
+         * @description Correct a draft that was read wrong. Nothing already settled is editable.
+         *
+         *     No audit event: neither create nor any of the settle paths below writes one,
+         *     and a lone entry for corrections would read as a complete trail that is not.
+         */
+        patch: operations["patch_transaction_v1_transactions__transaction_id__patch"];
+        trace?: never;
+    };
     "/v1/transactions/{transaction_id}/confirm": {
         parameters: {
             query?: never;
@@ -472,6 +495,176 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/day-plan/places": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Places
+         * @description The cap only filters the list; the room is what every band is judged on.
+         *
+         *     ``kind`` narrows to one sort of food and is echoed back beside the counts,
+         *     because the client cannot read its own state against a list that is still
+         *     in flight: the answer on screen has to say which kind it was actually
+         *     filtered by, exactly as it says which ceiling.
+         */
+        get: operations["get_places_v1_day_plan_places_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/day-plan/interpret": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Interpret Filters
+         * @description Read a sentence into the screen's own filters. It writes nothing.
+         *
+         *     The controls are the answer. Nothing here composes prose about the places
+         *     themselves, because a paragraph sitting above the chips would be a second
+         *     account of the same list with no way to tell which one the rows came from —
+         *     where a chip that turned itself on is a reading the user can see and undo.
+         *
+         *     Either the whole filter set comes back or none of it does. The origin is
+         *     echoed from the request untouched: it belongs to the device or to the KLCC
+         *     fallback, and a model naming somewhere the user did not is the fabrication
+         *     this refuses outright.
+         */
+        post: operations["interpret_filters_v1_day_plan_interpret_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/day-plan/drafts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Plan Draft
+         * @description Add a planned outing to today. It waits as a draft until it is confirmed.
+         *
+         *     Deliberately not a client POST to /v1/transactions with ``source: "plan"``:
+         *     the date is the server's clock, the confidence band's percentage is the
+         *     server's mapping, and the note that says the money has not moved is the
+         *     server's wording. Left to the client, three things a plan draft depends on
+         *     would be restatable by whoever called it.
+         *
+         *     Nothing here touches safe-to-spend, and that is the point rather than an
+         *     omission — a draft is excluded from every engine calculation, so the figure
+         *     on Today is the same after this call as before it.
+         */
+        post: operations["post_plan_draft_v1_day_plan_drafts_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/goals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Goal */
+        post: operations["create_goal_v1_goals_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/goals/{goal_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Goal */
+        get: operations["get_goal_v1_goals__goal_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/goals/{goal_id}/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Goal Plan */
+        get: operations["get_goal_plan_v1_goals__goal_id__plan_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/goals/{goal_id}/scenarios": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Goal Scenarios */
+        post: operations["post_goal_scenarios_v1_goals__goal_id__scenarios_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/goals/{goal_id}/impact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Goal Impact */
+        post: operations["post_goal_impact_v1_goals__goal_id__impact_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -711,6 +904,25 @@ export interface components {
             /** Count */
             count: number;
         };
+        /**
+         * CorrectTransactionRequest
+         * @description What the user says a draft should have read. Every field is optional.
+         *
+         *     Omitted means "leave it alone", which is why nothing here defaults to a
+         *     value: a body carrying only ``amount_sen`` must not blank the merchant.
+         *     ``confidence`` is absent on purpose — it is the reader's own figure, and a
+         *     corrected amount clears it rather than letting a client restate it.
+         */
+        CorrectTransactionRequest: {
+            /** Merchant */
+            merchant?: string | null;
+            /** Amount Sen */
+            amount_sen?: number | null;
+            /** Category */
+            category?: string | null;
+            /** Note */
+            note?: string | null;
+        };
         /** CreateTransactionRequest */
         CreateTransactionRequest: {
             /** Merchant */
@@ -779,6 +991,158 @@ export interface components {
             /** Goals */
             goals: components["schemas"]["GoalSummaryResponse"][];
         };
+        /**
+         * DayPlanFilters
+         * @description The Plan screen's controls, in one shape.
+         *
+         *     The same shape goes both ways: it is the state the screen is in when it
+         *     asks, and the state it should be in afterwards. ``lat``/``lng`` travel with
+         *     it because a ceiling means nothing without knowing where the list was
+         *     measured from — but they are only ever echoed back, never rewritten. See
+         *     ``DayPlanInterpretResponse``.
+         */
+        DayPlanFilters: {
+            /** Lat */
+            lat: number;
+            /** Lng */
+            lng: number;
+            /**
+             * Mode
+             * @default walk
+             * @enum {string}
+             */
+            mode: "walk" | "transit" | "ride";
+            /**
+             * Halal Only
+             * @default false
+             */
+            halal_only: boolean;
+            /** Cap Sen */
+            cap_sen?: number | null;
+            /** Kind */
+            kind?: string | null;
+            /**
+             * Sort
+             * @default balanced
+             * @enum {string}
+             */
+            sort: "balanced" | "cheapest" | "closest";
+        };
+        /**
+         * DayPlanInterpretRequest
+         * @description One sentence, and the controls it is to be read against.
+         *
+         *     The current state is sent with the sentence rather than assumed, because
+         *     most sentences only speak to one or two controls and the rest have to come
+         *     back untouched.
+         */
+        DayPlanInterpretRequest: {
+            /** Lat */
+            lat: number;
+            /** Lng */
+            lng: number;
+            /**
+             * Mode
+             * @default walk
+             * @enum {string}
+             */
+            mode: "walk" | "transit" | "ride";
+            /**
+             * Halal Only
+             * @default false
+             */
+            halal_only: boolean;
+            /** Cap Sen */
+            cap_sen?: number | null;
+            /** Kind */
+            kind?: string | null;
+            /**
+             * Sort
+             * @default balanced
+             * @enum {string}
+             */
+            sort: "balanced" | "cheapest" | "closest";
+            /** Text */
+            text: string;
+        };
+        /**
+         * DayPlanInterpretResponse
+         * @description What the sentence came to, and whether any of it may be applied.
+         *
+         *     ``filters`` is the whole new control state or it is null. There is no
+         *     partial answer: a client that applied half of a request would be showing a
+         *     list the user reads as the answer to all of it.
+         *
+         *     ``understood`` is the short line to show back, so a misreading is visible
+         *     and can be corrected by tapping the chip it got wrong. It is built from the
+         *     filters themselves, so it cannot describe a setting other than the one
+         *     being applied. ``unread`` is whatever part of the sentence produced no
+         *     filter — a place name, most often, since the origin is not the model's to
+         *     set. ``reason`` says why nothing was applied, and is empty when something
+         *     was.
+         */
+        DayPlanInterpretResponse: {
+            /** Applied */
+            applied: boolean;
+            filters: components["schemas"]["DayPlanFilters"] | null;
+            /** Understood */
+            understood: string;
+            /** Unread */
+            unread: string;
+            /** Reason */
+            reason: string;
+        };
+        /**
+         * DayPlanResponse
+         * @description The places, and the figures they were judged against.
+         *
+         *     ``room_sen`` is stated rather than left to be inferred from ``share``: it
+         *     is zero on a day already spent out, and a client dividing to recover it
+         *     would turn that zero into a number the user never had.
+         *
+         *     ``nearby_count`` is how many places the radius held before any filter ran,
+         *     ``matching_count`` how many were still standing after the halal filter, and
+         *     ``kind_count`` how many of those were the kind of food that was asked for —
+         *     all three before the ceiling. Without them, an empty ``places`` is
+         *     unreadable: a client would have to guess which of four causes emptied it,
+         *     and would blame the ceiling for a distance no ceiling can close, for a
+         *     halal toggle no ceiling can reach, or for there being no noodles in this
+         *     part of town. The counts nest, so the first of them that is nil is the
+         *     cause.
+         *
+         *     ``kind`` is the food filter this list was actually built with, echoed back.
+         *     Null means none was asked for. A client reads it rather than its own state
+         *     for the same reason it reads ``cap_sen``: while a newly tapped filter is in
+         *     flight, its own state describes a list that has not arrived yet.
+         *
+         *     ``nearest_over_cap`` is the cheapest few places the ceiling turned away, and
+         *     it is only ever non-empty when ``places`` is empty. It is a separate field
+         *     rather than extra rows in ``places`` precisely so that no client can render
+         *     it as though it had fitted: every place in it costs more than ``cap_sen``,
+         *     each carries ``band: "over"`` to say so on the row itself, and a client that
+         *     shows them owes the user a heading that says what they are. Every other
+         *     filter still holds over it — halal is still halal and ``kind`` is still that
+         *     kind — so the ceiling is the only thing relaxed, and only to say what the
+         *     money would have to stretch to.
+         */
+        DayPlanResponse: {
+            /** Room Sen */
+            room_sen: number;
+            /** Cap Sen */
+            cap_sen: number;
+            /** Kind */
+            kind: string | null;
+            /** Nearby Count */
+            nearby_count: number;
+            /** Matching Count */
+            matching_count: number;
+            /** Kind Count */
+            kind_count: number;
+            /** Places */
+            places: components["schemas"]["PlaceResponse"][];
+            /** Nearest Over Cap */
+            nearest_over_cap: components["schemas"]["PlaceResponse"][];
+        };
         /** DriverOut */
         DriverOut: {
             lever: components["schemas"]["LeverOut"];
@@ -810,6 +1174,135 @@ export interface components {
             /** Assumption */
             assumption: string;
         };
+        /** GoalCreateRequest */
+        GoalCreateRequest: {
+            /**
+             * Goal Type
+             * @enum {string}
+             */
+            goal_type: "emergency_starter_fund" | "upcoming_bill_annual_expense" | "travel" | "big_purchase" | "wedding_event_deposit" | "house_down_payment" | "car_down_payment" | "wedding_fund" | "full_emergency_fund" | "education_family_goal" | "custom_goal";
+            /** Name */
+            name: string;
+            /** Target Amount Sen */
+            target_amount_sen: number;
+            /**
+             * Current Saved Sen
+             * @default 0
+             */
+            current_saved_sen: number;
+            /**
+             * Target Date
+             * Format: date
+             */
+            target_date: string;
+            /**
+             * Priority
+             * @default flexible
+             * @enum {string}
+             */
+            priority: "protected" | "important" | "flexible";
+            /** Funding Account Ids */
+            funding_account_ids?: string[];
+        };
+        /** GoalCreateResponse */
+        GoalCreateResponse: {
+            goal: components["schemas"]["GoalDetailResponse"];
+            plan: components["schemas"]["GoalPlanResponse"];
+        };
+        /** GoalDetailResponse */
+        GoalDetailResponse: {
+            /**
+             * Goal Id
+             * Format: uuid
+             */
+            goal_id: string;
+            /**
+             * User Id
+             * Format: uuid
+             */
+            user_id: string;
+            /**
+             * Goal Type
+             * @enum {string}
+             */
+            goal_type: "emergency_starter_fund" | "upcoming_bill_annual_expense" | "travel" | "big_purchase" | "wedding_event_deposit" | "house_down_payment" | "car_down_payment" | "wedding_fund" | "full_emergency_fund" | "education_family_goal" | "custom_goal";
+            /** Name */
+            name: string;
+            /** Currency */
+            currency: string;
+            /** Target Amount Sen */
+            target_amount_sen: number;
+            /** Current Saved Sen */
+            current_saved_sen: number;
+            /** Target Date */
+            target_date: string | null;
+            /**
+             * Horizon
+             * @enum {string}
+             */
+            horizon: "short" | "long";
+            /**
+             * Priority
+             * @enum {string}
+             */
+            priority: "protected" | "important" | "flexible";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "draft" | "active" | "at_risk" | "needs_replan" | "paused" | "achieved" | "cancelled";
+            /** Funding Account Ids */
+            funding_account_ids: string[];
+            /** Current Plan Version */
+            current_plan_version?: number | null;
+        };
+        /** GoalImpactRequest */
+        GoalImpactRequest: {
+            /** Proposed Spend Sen */
+            proposed_spend_sen: number;
+        };
+        /** GoalImpactResponse */
+        GoalImpactResponse: {
+            /**
+             * Goal Id
+             * Format: uuid
+             */
+            goal_id: string;
+            /** Proposed Spend Sen */
+            proposed_spend_sen: number;
+            /** Safe To Spend */
+            safe_to_spend: boolean;
+            /** Protected Money Touched */
+            protected_money_touched: boolean;
+            /** Goal Reserve Shortfall Sen */
+            goal_reserve_shortfall_sen: number;
+            /** Projected Completion Date */
+            projected_completion_date: string | null;
+            /** Goal Delay Days */
+            goal_delay_days: number;
+            /** Flexible Spending Remaining Sen */
+            flexible_spending_remaining_sen: number;
+            /** Risk Flags */
+            risk_flags: string[];
+            /** Assumptions */
+            assumptions: string[];
+            /** Calculation Version */
+            calculation_version: string;
+            /** Evidence Refs */
+            evidence_refs: string[];
+        };
+        /** GoalMilestoneResponse */
+        GoalMilestoneResponse: {
+            /** Percentage */
+            percentage: number;
+            /** Amount Sen */
+            amount_sen: number;
+            /**
+             * Projected Date
+             * Format: date
+             */
+            projected_date: string;
+        };
         /** GoalOutlookOut */
         GoalOutlookOut: {
             /** Goal Id */
@@ -822,6 +1315,96 @@ export interface components {
             /** Probability Bp */
             probability_bp: number;
             median_shortfall: components["schemas"]["MoneyOut"];
+        };
+        /** GoalPlanResponse */
+        GoalPlanResponse: {
+            /**
+             * Plan Id
+             * Format: uuid
+             */
+            plan_id: string;
+            /**
+             * Goal Id
+             * Format: uuid
+             */
+            goal_id: string;
+            /** Version */
+            version: number;
+            /**
+             * Approval Status
+             * @enum {string}
+             */
+            approval_status: "draft" | "approved" | "superseded";
+            /** Feasible */
+            feasible: boolean;
+            /** Target Amount Sen */
+            target_amount_sen: number;
+            /** Current Saved Sen */
+            current_saved_sen: number;
+            /** Remaining Amount Sen */
+            remaining_amount_sen: number;
+            /**
+             * Target Date
+             * Format: date
+             */
+            target_date: string;
+            /** Required Contribution Per Payday Sen */
+            required_contribution_per_payday_sen: number;
+            /** Next Required Reserve Sen */
+            next_required_reserve_sen: number;
+            /** Projected Completion Date */
+            projected_completion_date: string | null;
+            /** Milestones */
+            milestones: components["schemas"]["GoalMilestoneResponse"][];
+            /** Risk Flags */
+            risk_flags: string[];
+            /** Assumptions */
+            assumptions: string[];
+            /** Calculation Version */
+            calculation_version: string;
+            /** Evidence Refs */
+            evidence_refs: string[];
+        };
+        /** GoalScenarioResponse */
+        GoalScenarioResponse: {
+            /**
+             * Scenario Id
+             * Format: uuid
+             */
+            scenario_id: string;
+            /**
+             * Goal Id
+             * Format: uuid
+             */
+            goal_id: string;
+            /** Label */
+            label: string;
+            /** Feasible */
+            feasible: boolean;
+            /** Contribution Per Payday Sen */
+            contribution_per_payday_sen: number;
+            /**
+             * Target Date
+             * Format: date
+             */
+            target_date: string;
+            /** Goal Delay Days */
+            goal_delay_days: number;
+            /** Flexible Spending Delta Sen */
+            flexible_spending_delta_sen: number;
+            /** Tradeoffs */
+            tradeoffs: string[];
+            /** Risk Flags */
+            risk_flags: string[];
+            /** Calculation Version */
+            calculation_version: string;
+            /** Evidence Refs */
+            evidence_refs: string[];
+        };
+        /** GoalScenariosResponse */
+        GoalScenariosResponse: {
+            /** Scenarios */
+            scenarios: components["schemas"]["GoalScenarioResponse"][];
         };
         /** GoalSummaryResponse */
         GoalSummaryResponse: {
@@ -937,6 +1520,82 @@ export interface components {
             days_until: number;
             /** Protected */
             protected: boolean;
+        };
+        /**
+         * PlaceResponse
+         * @description One outing, priced on the distance named by ``distance_basis``.
+         *
+         *     A fare is charged on the road, so ``km`` is the road distance whenever the
+         *     router answered for this place. Where it did not, ``km`` falls back to the
+         *     great circle, ``road_km`` is null, and ``distance_basis`` says
+         *     ``straight_line`` -- which the screen has to show, because a straight-line
+         *     ride fare in Kuala Lumpur can be half of the real one. The basis is
+         *     per-place: one search routes some destinations and fails on others.
+         */
+        PlaceResponse: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Kind */
+            kind: string;
+            /** Address */
+            address: string;
+            /** Lat */
+            lat: number;
+            /** Lng */
+            lng: number;
+            /** Km */
+            km: number;
+            /** Road Km */
+            road_km: number | null;
+            /**
+             * Distance Basis
+             * @enum {string}
+             */
+            distance_basis: "road" | "straight_line";
+            /** Travel Sen */
+            travel_sen: number;
+            /** Minutes */
+            minutes: number;
+            /** Total Sen */
+            total_sen: number;
+            /** Share */
+            share: number | null;
+            /**
+             * Band
+             * @enum {string}
+             */
+            band: "ok" | "tight" | "over";
+            /** Confidence */
+            confidence: string;
+            /** Halal */
+            halal: boolean;
+            /** Note */
+            note: string;
+        };
+        /**
+         * PlanDraftRequest
+         * @description A place the user tapped "Add to today" on, as the row showed it.
+         *
+         *     ``total_sen`` is the whole outing — meal plus travel — because that is the
+         *     single figure on the row and in the sheet's total. Sending the meal alone
+         *     would put a draft on screen that is not the thing the user added.
+         *
+         *     ``confidence`` is the place's own band, not a percentage: what "high" is
+         *     worth is the server's to decide, so two clients cannot come to different
+         *     answers about it. It is typed as a plain string rather than an enum because
+         *     the bands come from a curated data file that is regenerated, and a word this
+         *     build has not seen should cost the user their tap the least — the service
+         *     reads an unfamiliar one as the least certain band.
+         */
+        PlanDraftRequest: {
+            /** Name */
+            name: string;
+            /** Total Sen */
+            total_sen: number;
+            /** Confidence */
+            confidence: string;
         };
         /** RegisterRequest */
         RegisterRequest: {
@@ -1276,6 +1935,41 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransactionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_transaction_v1_transactions__transaction_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                transaction_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CorrectTransactionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1831,6 +2525,270 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BriefingRunResponse"];
+                };
+            };
+        };
+    };
+    get_places_v1_day_plan_places_get: {
+        parameters: {
+            query: {
+                lat: number;
+                lng: number;
+                mode?: "walk" | "transit" | "ride";
+                halal_only?: boolean;
+                cap_sen?: number | null;
+                radius_km?: number;
+                kind?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DayPlanResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    interpret_filters_v1_day_plan_interpret_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DayPlanInterpretRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DayPlanInterpretResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_plan_draft_v1_day_plan_drafts_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlanDraftRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransactionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_goal_v1_goals_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GoalCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalCreateResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_goal_v1_goals__goal_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                goal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalDetailResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_goal_plan_v1_goals__goal_id__plan_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                goal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalPlanResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_goal_scenarios_v1_goals__goal_id__scenarios_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                goal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalScenariosResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_goal_impact_v1_goals__goal_id__impact_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                goal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GoalImpactRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalImpactResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

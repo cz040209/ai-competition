@@ -7,9 +7,14 @@ import type {
   Category,
   DashboardToday,
   ForesightResponse,
+  DayPlan,
+  DayPlanAsk,
+  DayPlanReading,
   Memory,
+  PlanDraft,
   TokenResponse,
   Transaction,
+  TransactionCorrection,
 } from "@kira/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -64,14 +69,87 @@ export function useActivity(enabled: boolean, category: string | null = null) {
   });
 }
 
+export type DayPlanParams = {
+  lat: number;
+  lng: number;
+  mode: "walk" | "transit" | "ride";
+  halalOnly: boolean;
+  capSen?: number;
+  /** One kind of food, or null for every kind. */
+  kind?: string | null;
+};
+
+type DayPlanKey = readonly ["day-plan", DayPlanParams];
+
+/** The ceiling only decides which of the same places are shown. Everything else
+ *  in the search decides what the places are, how far away they are, and what
+ *  they cost — so a previous answer may outlive a change of ceiling and nothing
+ *  else. A kind of food is one of those others: the previous list is a list of
+ *  different shops, and holding it under a chip that now says Noodles would be
+ *  answering the new question with the old answer. */
+function sameSearch(before: DayPlanParams, now: DayPlanParams): boolean {
+  return (
+    before.lat === now.lat &&
+    before.lng === now.lng &&
+    before.mode === now.mode &&
+    before.halalOnly === now.halalOnly &&
+    (before.kind ?? null) === (now.kind ?? null)
+  );
+}
+
+export function useDayPlan(params: DayPlanParams) {
+  const query = new URLSearchParams({
+    lat: String(params.lat),
+    lng: String(params.lng),
+    mode: params.mode,
+    halal_only: String(params.halalOnly),
+    ...(params.capSen !== undefined ? { cap_sen: String(params.capSen) } : {}),
+    ...(params.kind ? { kind: params.kind } : {}),
+  });
+  return useQuery({
+    queryKey: ["day-plan", params] as DayPlanKey,
+    queryFn: () => api.get<DayPlan>("/v1/day-plan/places?" + query),
+    // The ceiling slider is part of this query's own key, so without this the
+    // control unmounts into the loading state on its first step and the drag is
+    // over before it began. Held across a change of origin or mode, though, the
+    // same trick would put the old answer under the new question: distances and
+    // fares measured from KLCC, sitting under a header that has already started
+    // saying "Near you". Waiting is honest; that is not.
+    placeholderData: (previous, previousQuery) => {
+      const before = (previousQuery?.queryKey as DayPlanKey | undefined)?.[1];
+      return before && sameSearch(before, params) ? previous : undefined;
+    },
+  });
+}
+
 /**
- * Every one of these moves money, so both the ledger and Today are refetched —
- * a stale safe-to-spend after a confirm would be a wrong number on screen.
+ * Read a sentence into the day planner's own controls.
+ *
+ * Not a query, and not a write either: nothing is stored, and the answer is
+ * only worth having in reply to a sentence somebody just typed. It invalidates
+ * nothing — the list re-fetches because the controls moved, through the same
+ * `useDayPlan` key as a tapped chip, which is the point of the whole endpoint.
+ * A hook that fetched its own places here would be a second list.
  */
-function useSettle(action: "confirm" | "discard" | "unconfirm") {
+export function useInterpretDayPlan() {
+  return useMutation<DayPlanReading, Error, DayPlanAsk>({
+    mutationFn: (ask) => api.post<DayPlanReading>("/v1/day-plan/interpret", ask),
+  });
+}
+
+/**
+ * A write that changes what the ledger and Today are showing, whichever screen
+ * it was fired from.
+ *
+ * Both keys, always. A stale safe-to-spend after a confirm would be a wrong
+ * number on screen, and Today also carries the count of drafts waiting — so
+ * even a write that cannot move the money (adding a plan, correcting a draft)
+ * still changes something Today is showing.
+ */
+function useLedgerWrite<TData, TVariables>(mutationFn: (variables: TVariables) => Promise<TData>) {
   const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => api.post<Transaction>(`/v1/transactions/${id}/${action}`),
+  return useMutation<TData, Error, TVariables>({
+    mutationFn,
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: activityKey }),
@@ -79,6 +157,10 @@ function useSettle(action: "confirm" | "discard" | "unconfirm") {
       ]);
     },
   });
+}
+
+function useSettle(action: "confirm" | "discard" | "unconfirm") {
+  return useLedgerWrite((id: string) => api.post<Transaction>(`/v1/transactions/${id}/${action}`));
 }
 
 export function useConfirmDraft() {
@@ -91,6 +173,40 @@ export function useDiscardDraft() {
 
 export function useUnconfirm() {
   return useSettle("unconfirm");
+}
+
+/** What the user says a draft should have read. Anything left out stays as it is. */
+export type Correction = { id: string } & TransactionCorrection;
+
+/**
+ * Correct a draft before it is counted. Drafts only — the API refuses the rest.
+ *
+ * A draft is not on the ledger, so this rarely moves Today's figure by itself —
+ * but the corrected amount is the one the next confirm spends, and a hook that
+ * re-read only the ledger would be the one path able to leave a safe-to-spend
+ * on screen that was worked out from a figure the user has already overwritten.
+ */
+export function useCorrectDraft() {
+  return useLedgerWrite(({ id, ...correction }: Correction) =>
+    api.patch<Transaction>(`/v1/transactions/${id}`, correction),
+  );
+}
+
+/**
+ * Add a planned outing to today. It lands as a draft, like every other capture.
+ *
+ * The body is the place as the row showed it — the whole outing's price, and
+ * the place's own confidence *band*. The date, the percentage that band is
+ * worth and the note that says the money has not moved are all the server's,
+ * so no client can restate them.
+ *
+ * Today's safe-to-spend does not change here and is refetched anyway: the count
+ * of drafts waiting sits on the same response, and it has gone up by one.
+ */
+export function useAddPlanToToday() {
+  return useLedgerWrite((outing: PlanDraft) =>
+    api.post<Transaction>("/v1/day-plan/drafts", outing),
+  );
 }
 
 export const butlerThreadKey = ["butler", "thread"] as const;
@@ -160,9 +276,8 @@ export function useReadCapture(kind: "receipt" | "voice") {
 
 /** Save what was read. It becomes a draft, which is not yet the ledger. */
 export function useCreateDraft() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (draft: {
+  return useLedgerWrite(
+    (draft: {
       merchant: string;
       amount_sen: number;
       occurred_on: string;
@@ -171,13 +286,7 @@ export function useCreateDraft() {
       confidence?: number | null;
       note?: string;
     }) => api.post<Transaction>("/v1/transactions", draft),
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: activityKey }),
-        queryClient.invalidateQueries({ queryKey: dashboardTodayKey }),
-      ]);
-    },
-  });
+  );
 }
 
 export function useLogin() {

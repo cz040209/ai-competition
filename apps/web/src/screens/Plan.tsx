@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useState } from "react";
 
 import type { ForesightDriver, ForesightResponse, GoalSummary } from "@kira/contracts";
@@ -13,6 +14,8 @@ type PlanProps = {
   isLoading: boolean;
   isError: boolean;
   onDriver: (driver: ForesightDriver) => void;
+  /** The day planner, rendered in its own section rather than on its own tab. */
+  dayPlan?: ReactNode;
 };
 
 const SHORT = "#4E8F79";
@@ -42,8 +45,8 @@ function driverCopy(driver: ForesightDriver, goalNames: Map<string, string>): st
   return `${driver.lever.delta.sen < 0 ? "Reduce" : "Raise"} a commitment by ${amount}`;
 }
 
-export function Plan({ data, goals = [], isLoading, isError, onDriver }: PlanProps) {
-  const [section, setSection] = useState<"overview" | "foresight">("overview");
+export function Plan({ data, goals = [], isLoading, isError, onDriver, dayPlan }: PlanProps) {
+  const [section, setSection] = useState<"overview" | "foresight" | "day">("overview");
 
   const names = new Map(goals.map((goal) => [goal.id, goal.name]));
   const details = new Map(goals.map((goal) => [goal.id, goal]));
@@ -54,7 +57,13 @@ export function Plan({ data, goals = [], isLoading, isError, onDriver }: PlanPro
       <div className="topbar">
         <div>
           <p className="eyebrow" style={{ margin: 0 }}>Plan</p>
-          <h1>{section === "overview" ? "Your money, deliberately" : "The road ahead"}</h1>
+          <h1>
+            {section === "overview"
+              ? "Your money, deliberately"
+              : section === "day"
+                ? "Today, out there"
+                : "The road ahead"}
+          </h1>
         </div>
         {section === "foresight" && data && <span className="plan-horizon">{data.horizon_days} days</span>}
       </div>
@@ -95,15 +104,25 @@ export function Plan({ data, goals = [], isLoading, isError, onDriver }: PlanPro
                   ))}
                 </div>
               )}
-              <button
-                className="btn btn-primary btn-sm"
-                style={{ marginTop: 20 }}
-                onClick={() => setSection("foresight")}
-              >
-                Open Foresight
-              </button>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 20 }}>
+                <button className="btn btn-primary btn-sm" onClick={() => setSection("foresight")}>
+                  Open Foresight
+                </button>
+                {dayPlan && (
+                  <button className="btn btn-ghost btn-sm" onClick={() => setSection("day")}>
+                    Open day planner
+                  </button>
+                )}
+              </div>
             </section>
           </Reveal>
+        ) : section === "day" ? (
+          <>
+            <button className="btn btn-ghost btn-sm" onClick={() => setSection("overview")}>
+              Back to plan
+            </button>
+            <div style={{ marginTop: 18 }}>{dayPlan}</div>
+          </>
         ) : isLoading || !data ? (
           <div style={{ paddingTop: 28 }}>
             <button className="btn btn-ghost btn-sm" onClick={() => setSection("overview")}>
