@@ -18,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kira.agent import events
+from kira.agent.goal_graph.run import resume_goal_run
 from kira.agent.run import stream_resume, stream_turn
 from kira.api.deps import CurrentUser, SessionDep, SessionFactory, StreamSessionDep
 from kira.api.schemas import (
@@ -194,10 +195,60 @@ async def respond(
         raise NO_APPROVAL from exc
     if approval.status != APPROVAL_PENDING:
         raise SETTLED
+    if approval.tool == "apply_goal_plan_change":
+        if body.action == "edit" and body.args is None:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "Goal plan edits require edited fields",
+            )
+        goal_decision = {
+            "action": body.action,
+            "edit": body.args if body.action == "edit" else None,
+        }
+        return StreamingResponse(
+            _resume_goal(factory, user.id, approval.id, goal_decision),
+            media_type="text/event-stream",
+        )
     decision = {"action": body.action, "args": body.args or approval.args}
     return StreamingResponse(
         _resume(factory, user.id, approval.id, decision), media_type="text/event-stream"
     )
+
+
+async def _resume_goal(
+    factory: SessionFactory,
+    user_id: uuid.UUID,
+    approval_id: uuid.UUID,
+    decision: dict[str, Any],
+) -> AsyncIterator[str]:
+    async with factory() as session:
+        user = (await session.execute(select(User).where(User.id == user_id))).scalar_one()
+        approval = await butler_approvals.get(session, user, approval_id)
+        try:
+            request_id = uuid.UUID(approval.graph_thread_id.rsplit(":", 1)[-1])
+        except ValueError:
+            yield _sse({"type": events.ERROR, "message": "Invalid goal graph checkpoint"})
+            return
+        result = await resume_goal_run(
+            session,
+            user,
+            thread_id=approval.thread_id,
+            request_id=request_id,
+            decision=decision,
+            as_of_date=today_for(),
+            explain=False,
+        )
+        if result.approval is not None:
+            yield _sse({"type": events.APPROVAL, **result.approval})
+        yield _sse(
+            {
+                "type": events.DONE,
+                "answer": result.final_response,
+                "request_id": str(result.request_id),
+                "approval": result.state.get("approval"),
+                "llm_calls": result.llm_calls,
+            }
+        )
 
 
 async def _resume(

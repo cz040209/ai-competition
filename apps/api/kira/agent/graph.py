@@ -95,10 +95,15 @@ async def setup_checkpointer(dsn: str) -> BaseCheckpointSaver | None:
     global _graph, _saver_context
     from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
-    _saver_context = AsyncPostgresSaver.from_conn_string(dsn)
+    from kira.agent.goal_graph.graph import checkpoint_serializer
+
+    _saver_context = AsyncPostgresSaver.from_conn_string(dsn, serde=checkpoint_serializer())
     saver = await _saver_context.__aenter__()
     await saver.setup()
     _graph = build_graph(saver)
+    from kira.agent.goal_graph.graph import configure_goal_graph
+
+    configure_goal_graph(saver)
     return saver
 
 
@@ -109,6 +114,9 @@ async def close_checkpointer() -> None:
         await _saver_context.__aexit__(None, None, None)
         _saver_context = None
     _graph = None
+    from kira.agent.goal_graph.graph import configure_goal_graph
+
+    configure_goal_graph(None)
 
 
 def graph_thread_id(thread_id: uuid.UUID, message_id: uuid.UUID) -> str:
