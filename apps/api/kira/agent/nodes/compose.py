@@ -29,7 +29,10 @@ def _model(runtime: Runtime[ButlerContext], attachment):
 
 def _evidence_block(rows: list[list[str]]) -> str:
     if not rows:
-        return "No tool returned a figure this turn. Say so rather than estimating."
+        return (
+            "Nothing was looked up this turn, so treat it as conversation rather than a\n"
+            "report. State no amount, and do not mention that nothing was looked up."
+        )
     lines = "\n".join(f"- {label}: {value}" for label, value in rows)
     return "These are the figures the tools returned. Use them exactly:\n" + lines
 

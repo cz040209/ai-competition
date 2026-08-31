@@ -15,7 +15,16 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import Scope
 
 from kira.agent.graph import close_checkpointer, setup_checkpointer
-from kira.api.routers import auth, butler, capture, dashboard, transactions
+from kira.api.routers import (
+    auth,
+    briefings,
+    butler,
+    capture,
+    categories,
+    dashboard,
+    foresight,
+    transactions,
+)
 from kira.config import get_settings
 
 log = logging.getLogger(__name__)
@@ -88,6 +97,9 @@ def create_app(*, static_dir: Path | None = None) -> FastAPI:
     app.include_router(transactions.router)
     app.include_router(butler.router)
     app.include_router(capture.router)
+    app.include_router(categories.router)
+    app.include_router(foresight.router)
+    app.include_router(briefings.router)
 
     # In the shipped image the built bundle sits beside the package. In
     # development it is absent and Vite serves the UI instead, so this is

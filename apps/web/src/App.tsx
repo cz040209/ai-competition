@@ -1,15 +1,21 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 
+import type { ForesightDriver } from "@kira/contracts";
+
 import {
   useActivity,
   useButlerThread,
+  useBriefingToday,
   useConfirmDraft,
   useDashboardToday,
   useDiscardDraft,
+  useCategories,
+  useForesight,
   useMemories,
   useUnconfirm,
 } from "./api/hooks";
-import { IcActivity, IcMore, IcPlan, IcSpark, IcToday } from "./components/Icons";
+import { EntrySheet, type EntryAttachment } from "./components/EntrySheet";
+import { IcActivity, IcMore, IcPlan, IcPlus, IcSpark, IcToday } from "./components/Icons";
 import { Motes } from "./components/Motes";
 import { NavItem } from "./components/NavItem";
 import { ScrollContext } from "./components/Reveal";
@@ -18,7 +24,7 @@ import { Activity } from "./screens/Activity";
 import { Butler } from "./screens/Butler";
 import { Login } from "./screens/Login";
 import { More } from "./screens/More";
-import { Placeholder } from "./screens/Placeholder";
+import { Plan } from "./screens/Plan";
 import { Today } from "./screens/Today";
 
 export type Tab = "today" | "activity" | "butler" | "plan" | "more";
@@ -30,15 +36,23 @@ export function App() {
   const [dir, setDir] = useState(0);
   const [boot, setBoot] = useState(true);
   const [signedIn, setSignedIn] = useState(false);
+  const [entry, setEntry] = useState(false);
+  // A sentence raised from Today or Activity, handed to the Butler to ask.
+  const [pending, setPending] = useState<{ text: string; attachment?: EntryAttachment } | null>(
+    null,
+  );
   const viewRef = useRef<HTMLDivElement>(null);
   const screenRef = useRef<HTMLDivElement>(null);
   const dashboard = useDashboardToday(signedIn);
+  const briefing = useBriefingToday(signedIn);
+  const foresight = useForesight(signedIn && tab === "plan");
   const [category, setCategory] = useState<string | null>(null);
   const activity = useActivity(signedIn && tab === "activity", category);
   // The thread is fetched once the user signs in, not on first open: the
   // Butler tab should already have its history when it appears.
   const butler = useButlerThread(signedIn);
   const memories = useMemories(signedIn && tab === "more");
+  const categories = useCategories(signedIn);
   const confirm = useConfirmDraft();
   const discard = useDiscardDraft();
   const unconfirm = useUnconfirm();
@@ -80,6 +94,20 @@ export function App() {
     const to = TABS.indexOf(next);
     setDir(next === "butler" || tab === "butler" ? 0 : to > from ? 1 : -1);
     setTab(next);
+  };
+
+  const proposeDriver = (driver: ForesightDriver) => {
+    const amount = `RM${(Math.abs(driver.lever.delta.sen) / 100).toFixed(2)}`;
+    const goal = dashboard.data?.goals.find((item) => item.id === driver.lever.target_id);
+    const revisedMonthly = goal ? goal.monthly_sen + driver.lever.delta.sen : null;
+    const text =
+      driver.lever.kind === "goal_monthly" && goal && revisedMonthly !== null
+        ? `Please propose setting my monthly savings for ${goal.name} to RM${(revisedMonthly / 100).toFixed(2)}. Show me the approval card; do not apply anything yet.`
+        : driver.lever.kind === "commitment_amount"
+          ? `Please help me propose reducing this commitment by ${amount}. Show me the approval card; do not apply anything yet.`
+          : `Help me make a plan to spend ${amount} less each day. Do not change anything yet.`;
+    setPending({ text });
+    go("butler");
   };
 
   const dark = tab === "butler";
@@ -133,6 +161,7 @@ export function App() {
                       data={dashboard.data}
                       isLoading={dashboard.isLoading}
                       isError={dashboard.isError}
+                      briefing={briefing.data}
                       go={go}
                     />
                   )}
@@ -151,10 +180,22 @@ export function App() {
                     />
                   )}
                   {signedIn && tab === "butler" && (
-                    <Butler thread={butler.data} isLoading={butler.isLoading} />
+                    <Butler
+                      thread={butler.data}
+                      isLoading={butler.isLoading}
+                      categories={categories.data}
+                      pending={pending}
+                      onPendingAsked={() => setPending(null)}
+                    />
                   )}
                   {signedIn && tab === "plan" && (
-                    <Placeholder title="Plan" blurb="Goals, scenarios, and the day planner." week="3" />
+                    <Plan
+                      data={foresight.data}
+                      goals={dashboard.data?.goals}
+                      isLoading={foresight.isLoading}
+                      isError={foresight.isError}
+                      onDriver={proposeDriver}
+                    />
                   )}
                   {signedIn && tab === "more" && (
                     <More memories={memories.data} isLoading={memories.isLoading} />
@@ -163,6 +204,23 @@ export function App() {
               </div>
             </ScrollContext.Provider>
           </SheetHostContext.Provider>
+
+          {signedIn && (tab === "today" || tab === "activity") && (
+            <button className="fab" onClick={() => setEntry(true)} aria-label="Add spending">
+              <IcPlus size={21} />
+            </button>
+          )}
+
+          {entry && (
+            <EntrySheet
+              onClose={() => setEntry(false)}
+              onAsk={(text, attachment) => {
+                setEntry(false);
+                setPending({ text, attachment });
+                go("butler");
+              }}
+            />
+          )}
 
           {signedIn && (
             <nav className="nav">

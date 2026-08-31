@@ -123,6 +123,15 @@ def route_after_guard(state: ButlerState) -> str:
 
 
 def route_after_tools(state: ButlerState) -> str:
+    """Where a turn goes once its reads have run.
+
+    Back to the model only when the guard refused something and it deserves a
+    second attempt with that refusal in front of it. Otherwise the reads are the
+    answer, and a second tool-bound round trip is latency the user pays for
+    nothing.
+    """
     if state.get("pending_write"):
         return "approval"
-    return "agent"
+    if state.get("refusals"):
+        return "agent"
+    return "compose"
