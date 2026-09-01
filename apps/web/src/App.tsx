@@ -17,9 +17,9 @@ import { ScrollContext } from "./components/Reveal";
 import { SheetHostContext } from "./components/Sheet";
 import { Activity } from "./screens/Activity";
 import { Butler } from "./screens/Butler";
-import { DayPlan } from "./screens/DayPlan";
 import { Login } from "./screens/Login";
 import { More } from "./screens/More";
+import { Plan, type PlanView } from "./screens/Plan";
 import { Today } from "./screens/Today";
 
 export type Tab = "today" | "activity" | "butler" | "plan" | "more";
@@ -31,6 +31,7 @@ export function App() {
   const [dir, setDir] = useState(0);
   const [boot, setBoot] = useState(true);
   const [signedIn, setSignedIn] = useState(false);
+  const [planView, setPlanView] = useState<PlanView>("daily");
   const viewRef = useRef<HTMLDivElement>(null);
   const screenRef = useRef<HTMLDivElement>(null);
   const dashboard = useDashboardToday(signedIn);
@@ -77,8 +78,9 @@ export function App() {
     };
   }, [tab]);
 
-  const go = (next: Tab) => {
+  const go = (next: Tab, nextPlanView: PlanView = "daily") => {
     if (next === tab) return;
+    if (next === "plan") setPlanView(nextPlanView);
     const from = TABS.indexOf(tab);
     const to = TABS.indexOf(next);
     setDir(next === "butler" || tab === "butler" ? 0 : to > from ? 1 : -1);
@@ -162,7 +164,7 @@ export function App() {
                   {signedIn && tab === "butler" && (
                     <Butler thread={butler.data} isLoading={butler.isLoading} />
                   )}
-                  {signedIn && tab === "plan" && <DayPlan />}
+                  {signedIn && tab === "plan" && <Plan initialView={planView} />}
                   {signedIn && tab === "more" && (
                     <More memories={memories.data} isLoading={memories.isLoading} />
                   )}
