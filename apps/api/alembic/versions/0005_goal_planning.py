@@ -1,15 +1,15 @@
 """versioned deterministic goal planning
 
-Revision ID: 0003
-Revises: 0002
+Revision ID: 0005
+Revises: 0004
 """
 
 import sqlalchemy as sa
 
 from alembic import op
 
-revision = "0003"
-down_revision = "0002"
+revision = "0005"
+down_revision = "0004"
 branch_labels = None
 depends_on = None
 
@@ -22,9 +22,8 @@ def upgrade() -> None:
     op.add_column(
         "goals", sa.Column("currency", sa.String(length=3), server_default="MYR", nullable=False)
     )
-    # Legacy goals did not have a target date. They remain readable by the old
-    # dashboard; only newly created planner goals require this field.
-    op.add_column("goals", sa.Column("target_date", sa.Date(), nullable=True))
+    # goals.target_date already arrived with 0003; the planner only needs it
+    # indexed. Legacy goals keep it null and stay readable by the old dashboard.
     op.add_column(
         "goals",
         sa.Column("priority", sa.String(length=12), server_default="flexible", nullable=False),
@@ -139,7 +138,6 @@ def downgrade() -> None:
         "funding_account_ids",
         "status",
         "priority",
-        "target_date",
         "currency",
         "goal_type",
     ):

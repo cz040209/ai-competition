@@ -13,7 +13,7 @@ import { goalTypeLabel, statusLabel } from "./goalUi";
 type GoalFilter = "all" | "short" | "long";
 type GoalPage = { name: "home" } | { name: "create" } | { name: "detail"; goalId: string };
 
-export function GoalPlanner() {
+export function GoalPlanner({ onOpenForesight }: { onOpenForesight?: () => void }) {
   const [page, setPage] = useState<GoalPage>({ name: "home" });
 
   if (page.name === "create") {
@@ -31,11 +31,20 @@ export function GoalPlanner() {
     <GoalsHome
       onCreate={() => setPage({ name: "create" })}
       onView={(goalId) => setPage({ name: "detail", goalId })}
+      onOpenForesight={onOpenForesight}
     />
   );
 }
 
-function GoalsHome({ onCreate, onView }: { onCreate: () => void; onView: (goalId: string) => void }) {
+function GoalsHome({
+  onCreate,
+  onView,
+  onOpenForesight,
+}: {
+  onCreate: () => void;
+  onView: (goalId: string) => void;
+  onOpenForesight?: () => void;
+}) {
   const dashboard = useDashboardToday(true);
   const [filter, setFilter] = useState<GoalFilter>("all");
   const goals = dashboard.data?.goals ?? [];
@@ -55,6 +64,12 @@ function GoalsHome({ onCreate, onView }: { onCreate: () => void; onView: (goalId
             </button>
           ))}
         </div>
+
+        {onOpenForesight && (
+          <button className="btn btn-line goal-full-button" onClick={onOpenForesight}>
+            Open Foresight
+          </button>
+        )}
 
         {dashboard.isLoading && (
           <section className="goal-state-card"><span className="goal-loading-dot" /><h2>Loading your goals…</h2><p>Reading the latest confirmed plans.</p></section>

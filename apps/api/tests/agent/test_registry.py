@@ -7,7 +7,7 @@ import json
 import re
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from kira.agent.tools import MODULES, REGISTRY, ToolSpec, ToolSpecError, build_registry
 
@@ -121,3 +121,23 @@ def test_reads_writes_and_workflows_partition_the_registry():
         == len(REGISTRY)
     )
     assert {spec.name for spec in REGISTRY.workflows()} == {"start_goal_planning"}
+
+
+class TestAddTransactionCategory:
+    """An edited approval is user input, so the category cannot be free text."""
+
+    def test_it_accepts_a_known_category(self):
+        spec = REGISTRY.get("add_transaction")
+        args = spec.args_model.model_validate(
+            {"merchant": "Mamak", "amount_sen": 1250, "occurred_on": "2026-09-03",
+             "category": "food"}
+        )
+        assert args.category == "food"
+
+    def test_it_refuses_one_the_ledger_cannot_file(self):
+        spec = REGISTRY.get("add_transaction")
+        with pytest.raises(ValidationError):
+            spec.args_model.model_validate(
+                {"merchant": "Mamak", "amount_sen": 1250, "occurred_on": "2026-09-03",
+                 "category": "makan"}
+            )

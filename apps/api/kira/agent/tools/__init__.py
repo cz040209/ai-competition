@@ -12,6 +12,7 @@ from kira.agent.tools import (
     commitments,
     dashboard,
     day_plan,
+    foresight,
     goal_workflow,
     goals,
     ledger,
@@ -35,6 +36,7 @@ MODULES = (
     commitments,
     memory,
     capture,
+    foresight,
     day_plan,
 )
 

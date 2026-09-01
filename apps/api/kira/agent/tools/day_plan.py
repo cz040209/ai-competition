@@ -182,6 +182,12 @@ async def _build(ctx: ToolContext, args: PlanArgs) -> ToolResult:
         # "nothing under RM10" leaves the user with nowhere to eat and the
         # search already knows what the nearest thing costs.
         "nearest_over_cap": [row(place) for place in found.nearest_over_cap],
+        # Only ever populated where a kind was asked for, and every one of
+        # these is a place that kind did not match. Nearest first rather than
+        # cheapest -- being right here is what a near miss has going for it.
+        # They carry their real kind like any other row, because that is the
+        # word the panel will show whatever the answer says about the menu.
+        "near_misses": [row(place) for place in found.near_misses],
     }
 
     # Labelled as the dashboard tool labels it, so the two collapse into one row
@@ -254,6 +260,20 @@ async def _build(ctx: ToolContext, args: PlanArgs) -> ToolResult:
                 ),
                 EvidenceRow("Over the ceiling by", money(closest.total_sen - cap_sen)),
             )
+
+    # Every near miss gets a row, and the row states the kind the data gives
+    # it. That is the whole guard on the one thing the model is allowed to know
+    # better than the tags: it may suggest that the burger place also does
+    # chicken, and the panel underneath will go on saying "McDonald's ·
+    # Burgers · RM18.00" -- the claim stays the model's, the category stays the
+    # data's, and the price is the one this search measured rather than one
+    # remembered off a menu. Rows for all of them, not just the one that gets
+    # named, because which one that is cannot be known until after the answer
+    # is written.
+    evidence += tuple(
+        EvidenceRow("Also nearby", f"{place.name} · {place.kind} · {money(place.total_sen)}")
+        for place in found.near_misses
+    )
 
     return ToolResult(value, evidence)
 
@@ -361,6 +381,33 @@ SPECS = (
             "and say how far over it is: 'nothing under RM10 — the closest is RM11.50 "
             "at Kopi Kaki'. Never present one as fitting, and never count them among "
             "the places that did.\n"
+            "`near_misses` appears only when you asked for a kind of food, and it is "
+            "the closest few places that kind did NOT match — nearest first, one per "
+            "kind, each with the kind the data really gives it and the price of the "
+            "whole outing. It is there for the one thing you know and the data does "
+            "not: what a place actually serves. "
+            "The kinds come from OpenStreetMap, which records one word per place and "
+            "no menu — it calls McDonald's burgers and stops, so a search for chicken "
+            "finds KFC and says nothing about the McDonald's across the road. When you "
+            "can see a place in `near_misses` that you know serves what was asked for, "
+            "you may point at it, after the recommendation rather than instead of it.\n"
+            "Suggest it, never assert it. 'McDonald's is closer, and it does fried "
+            "chicken too' is yours to say; 'McDonald's serves fried chicken for RM12' "
+            "is a menu you have read, and you have not read one. The price you quote is "
+            "the one on the row and nothing else, and the claim about the food is yours "
+            "rather than the data's — the panel beside your answer will list that place "
+            "as Burgers, because Burgers is what was recorded about it.\n"
+            "Only reach for this where your knowledge is actually good. A global chain "
+            "— McDonald's, KFC, Starbucks, Subway — you can be confident about. "
+            "'Restoran MK Corner' you cannot: you have no idea what is on its menu, and "
+            "a guess dressed as knowledge sends someone across town on the strength of "
+            "a name. Say nothing about the ones you do not know.\n"
+            "Name only places this tool returned to you — from `places`, from "
+            "`nearest_over_cap`, or from `near_misses`. Never name a restaurant that is "
+            "not in one of those lists, however certain you are that it exists and is "
+            "nearby. Those three lists are real places at measured distances and "
+            "measured prices; anything else is a shop you invented, and the user cannot "
+            "tell the difference.\n"
             "Every figure you say is one this tool returned. Reason about them "
             "freely — compare two totals, call one a third of today's room, say a "
             "place is the only one under the ceiling — but never author one. A "

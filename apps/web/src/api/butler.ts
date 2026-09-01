@@ -16,6 +16,7 @@ export type ApprovalView = {
   id: string;
   summary: string;
   tool: string;
+  args?: Record<string, unknown>;
   before?: GoalPlanPreview | null;
   after?: GoalPlanPreview | null;
   basePlanVersion?: number;

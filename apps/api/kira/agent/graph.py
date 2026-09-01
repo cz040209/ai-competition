@@ -2,15 +2,17 @@
 
     START
       → load_context
-      → agent → insist  ⇄  guard  →  tools          (reads; back to agent)
+      → agent → insist  ⇄  guard  →  tools          (reads; on to compose)
                            guard  →  approval       (ordinary writes; interrupt())
                            guard  →  goal_workflow  (typed Goal subgraph)
+                           guard  →  agent          (all refused, nothing ran; once)
       → compose (ordinary turns; Goal already composed its own response)
       → extract_memory
       → END
 
-The shape is the argument. Reads loop freely, writes leave the loop, and the
-only path from a write tool to the database runs through a user's decision.
+The shape is the argument. Reads answer straight through — only a refusal is
+worth a second pass — writes leave the loop, and the only path from a write tool
+to the database runs through a user's decision.
 
 `insist` is the one place a tool call is made by the app rather than proposed
 by the model, and it is deliberately upstream of the guard: a call this app
@@ -56,6 +58,9 @@ def build_graph(checkpointer: BaseCheckpointSaver | None = None):
     builder.add_edge("load_context", "agent")
     builder.add_edge("agent", "insist")
     builder.add_edge("insist", "guard")
+    # Back to `agent` is the fourth way out, and the narrow one: every call
+    # this pass proposed was refused and nothing has run, so the turn would
+    # otherwise compose from no evidence. See `route_after_guard`.
     builder.add_conditional_edges(
         "guard",
         route_after_guard,
@@ -64,15 +69,22 @@ def build_graph(checkpointer: BaseCheckpointSaver | None = None):
             "approval": "approval",
             "workflow": "goal_workflow",
             "compose": "compose",
+            "agent": "agent",
         },
     )
     # A batch holding both reads and a write executes the reads first, then
     # stops at the write — so the approval card is asked with its evidence
-    # already gathered.
+    # already gathered. Reads that ran cleanly go straight to the answer; only a
+    # refusal is worth handing back to the model.
     builder.add_conditional_edges(
         "tools",
         route_after_tools,
-        {"approval": "approval", "workflow": "goal_workflow", "agent": "agent"},
+        {
+            "approval": "approval",
+            "workflow": "goal_workflow",
+            "agent": "agent",
+            "compose": "compose",
+        },
     )
     # The Goal subgraph already composed the authoritative turn.
     # The ordinary composer would spend a third LLM call; generic memory

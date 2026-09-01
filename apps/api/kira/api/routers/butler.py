@@ -21,6 +21,7 @@ from kira.agent import events
 from kira.agent.goal_graph.presentation import goal_evidence, goal_resume_answer
 from kira.agent.goal_graph.run import resume_goal_run
 from kira.agent.run import stream_resume, stream_turn
+from kira.agent.scheduled_approvals import ScheduledApprovalError, apply_scheduled_approval
 from kira.api.deps import CurrentUser, SessionDep, SessionFactory, StreamSessionDep
 from kira.api.schemas import (
     ApprovalDecisionRequest,
@@ -301,17 +302,43 @@ async def _resume(
         approval = await butler_approvals.get(session, user, approval_id)
         thread = await butler_thread.get_thread(session, user, approval.thread_id)
         final: dict[str, Any] = {}
-        async for event in stream_resume(
-            session,
-            user,
-            thread,
-            graph_thread=approval.graph_thread_id,
-            decision=decision,
-            today=today_for(),
-        ):
-            if event.get("type") == events.DONE:
-                final = event
-            yield _sse(event)
+        if approval.graph_thread_id.startswith("briefing:"):
+            if decision["action"] == "reject":
+                await butler_approvals.settle(session, approval, applied=False)
+                await record(
+                    session,
+                    user,
+                    actor=ACTOR_USER,
+                    action=f"butler.rejected.{approval.tool}",
+                    detail={"summary": approval.summary},
+                )
+                final = {"answer": "Okay — I left that draft unchanged.", "evidence": []}
+            else:
+                try:
+                    applied = await apply_scheduled_approval(
+                        session,
+                        user,
+                        approval,
+                        arguments=decision["args"],
+                        today=today_for(),
+                    )
+                except ScheduledApprovalError as exc:
+                    yield _sse({"type": events.ERROR, "message": str(exc)})
+                    return
+                final = {"answer": applied.answer, "evidence": applied.evidence}
+            yield _sse({"type": events.DONE, **final})
+        else:
+            async for event in stream_resume(
+                session,
+                user,
+                thread,
+                graph_thread=approval.graph_thread_id,
+                decision=decision,
+                today=today_for(),
+            ):
+                if event.get("type") == events.DONE:
+                    final = event
+                yield _sse(event)
 
         # A rejection never reaches the approval node's settle path, so the
         # projection is closed here rather than left pending forever.

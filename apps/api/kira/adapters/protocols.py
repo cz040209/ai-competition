@@ -43,6 +43,20 @@ class Place:
     # fare to get there has to be findable, and coordinates are not an address.
     # Defaulted so the small worlds the tests build stay readable.
     address: str = ""
+    # Every kind of food this place serves, ``kind`` first. OpenStreetMap lets
+    # one place carry several cuisines and a fifth of the tagged places in KL
+    # do -- Nando's is chicken and portuguese, Jake's Charbroil is a steakhouse
+    # and seafood -- so a place that serves two things has to be findable by
+    # either. ``kind`` above stays the single word a row is labelled with and
+    # the one its estimate was banded from; this is for matching only.
+    kinds: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        # Never empty, so nothing downstream has to remember a fallback: a
+        # place with one cuisine carries a one-word tuple of its own kind, and
+        # every caller can read ``kinds`` and be reading the whole truth.
+        if not self.kinds:
+            object.__setattr__(self, "kinds", (self.kind,))
 
 
 @runtime_checkable

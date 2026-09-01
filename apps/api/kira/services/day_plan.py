@@ -51,6 +51,11 @@ def kind_key(value: str) -> str:
 def known_kinds() -> tuple[str, ...]:
     """Every kind of food the curated set actually carries, alphabetically.
 
+    Every kind, not only the ones shown as labels: a place tagged
+    ``steak_house;seafood`` is found by a search for seafood, so seafood is a
+    word the vocabulary has to offer even if no place in the set is labelled
+    with it.
+
     Derived from the loaded data rather than written down beside it. The set is
     regenerated from OpenStreetMap (scripts/fetch-kl-places.py), and a
     hand-kept list would go on offering a word the data no longer has -- a
@@ -94,7 +99,7 @@ def resolve_kind(value: str) -> str | None:
 # alphabetically last standing here, which is arbitrary and harmless: the
 # filter itself compares keys, so both spellings match either way, and only the
 # word offered to a model would be the other one.
-_KL_KINDS: tuple[str, ...] = tuple(sorted({place.kind for place in KL_PLACES}))
+_KL_KINDS: tuple[str, ...] = tuple(sorted({k for place in KL_PLACES for k in place.kinds}))
 _KL_KINDS_BY_KEY: dict[str, str] = {kind_key(kind): kind for kind in _KL_KINDS}
 
 
@@ -118,6 +123,9 @@ class EvaluatedPlace:
     id: str
     name: str
     kind: str
+    # What this place can be found by, ``kind`` first. Carried through the
+    # evaluation because the kind filter and the landscape both run after it.
+    kinds: tuple[str, ...]
     address: str
     # Where it stands, so a client can point a map at this shop rather than at
     # its name. A quarter of the addresses above are a locality rather than a
@@ -151,6 +159,9 @@ class KindPrice:
     ``cheapest_total_sen`` is a whole outing -- meal and travel together -- so
     it is the same figure the places themselves carry, and a ceiling can be
     held against it directly.
+
+    ``count`` is how many places a filter for this kind would return, which is
+    not a share of the list: see ``price_landscape``.
     """
 
     kind: str
@@ -164,14 +175,28 @@ def price_landscape(evaluated: Iterable[EvaluatedPlace]) -> tuple[KindPrice, ...
     Grouped on ``kind_key`` rather than on the raw word, so that one row
     answers for one filter: whatever a kind filter would match, exactly one row
     here describes.
+
+    A place that carries several kinds is counted under every one of them, and
+    that is what keeps the promise in the line above true. The filter matches
+    any of a place's kinds, so a steakhouse OSM also calls seafood comes back
+    from a search for seafood; counted only under the word on its label, the
+    seafood row would be short by one place, or missing entirely -- the
+    landscape saying there is no seafood here while the list beneath it shows
+    some. The price is that the counts no longer sum to the length of the list.
+    They never were meant to: this is one answer per kind, not a division of
+    the places between them.
     """
-    by_key: dict[str, list[EvaluatedPlace]] = {}
+    # The kind is carried beside the place because a row is labelled with the
+    # word its own group was matched on -- the seafood row says "Seafood", not
+    # whatever the cheapest place in it happens to be labelled.
+    by_key: dict[str, list[tuple[str, EvaluatedPlace]]] = {}
     for place in evaluated:
-        by_key.setdefault(kind_key(place.kind), []).append(place)
+        for kind in place.kinds:
+            by_key.setdefault(kind_key(kind), []).append((kind, place))
     rows = []
     for group in by_key.values():
-        cheapest = min(group, key=lambda place: place.total_sen)
-        rows.append(KindPrice(cheapest.kind, len(group), cheapest.total_sen))
+        kind, cheapest = min(group, key=lambda pair: pair[1].total_sen)
+        rows.append(KindPrice(kind, len(group), cheapest.total_sen))
     return tuple(sorted(rows, key=lambda row: (row.cheapest_total_sen, row.kind)))
 
 
@@ -219,6 +244,7 @@ def evaluate_place(
         id=place.id,
         name=place.name,
         kind=place.kind,
+        kinds=place.kinds,
         address=place.address,
         lat=place.lat,
         lng=place.lng,
@@ -254,7 +280,9 @@ class PlacesFound:
       equals ``matching_count`` when no kind was asked for. Nil against a
       non-nil ``matching_count`` means there is nothing of that kind around
       here at all -- again not a ceiling, and not a distance either, since
-      other food is in range.
+      other food is in range. It counts places, so a place that carries the
+      asked-for kind alongside two others is one of them, and it is the same
+      figure as the ``landscape`` row for that kind.
     * anything left after that, with ``places`` still empty, is the ceiling:
       the one cause the user can actually drag away.
 
@@ -278,6 +306,25 @@ class PlacesFound:
     It is populated on a completely empty ``places`` and never on a thin one.
     Empty-only is a rule a person can hold in their head, and it keeps "the
     ceiling is being respected" something they can go on trusting.
+
+    ``near_misses`` is the other half of a kind filter: a few of the places it
+    turned away, with the kind they really are and the price they really cost.
+    It exists because the tags are one word per place and a menu is not. OSM
+    calls McDonald's ``burger`` and stops there, so a search for chicken finds
+    KFC and walks the user past a McDonald's that fries chicken all day. No
+    refresh of the data fixes that -- there is no tag for it -- and the only
+    thing in this app that knows it is the language model.
+    So these rows are handed over for it to reason across: real places, really
+    nearby, at prices this search measured. What none of them is, is a match.
+    Each one keeps its own kind, and anything said about what it serves beyond
+    that word belongs to whoever said it. Present only where a kind was asked
+    for: with no filter, nothing was turned away.
+
+    Ordered by distance rather than by price, which nothing else here is: see
+    ``_near_misses``. It follows that one of these can cost more than the
+    ``landscape`` row for its own kind, and that is the two saying different
+    things rather than disagreeing -- the row is the cheapest of that kind
+    anywhere in range, and this is the closest one.
     """
 
     places: tuple[EvaluatedPlace, ...]
@@ -286,6 +333,7 @@ class PlacesFound:
     kind_count: int
     landscape: tuple[KindPrice, ...]
     nearest_over_cap: tuple[EvaluatedPlace, ...] = ()
+    near_misses: tuple[EvaluatedPlace, ...] = ()
 
 
 # How many of the turned-away places are offered back when the ceiling admitted
@@ -313,6 +361,43 @@ def _nearest_over_cap(turned_away: Sequence[EvaluatedPlace]) -> tuple[EvaluatedP
     return tuple(replace(place, band="over") for place in nearest)
 
 
+# How many of the places a kind filter turned away are handed back beside the
+# ones it kept. Modest on purpose: a dozen matches and a whole price landscape
+# already go over with them, and a long second list would stop reading as an
+# aside and start reading as the answer.
+NEAR_MISSES = 4
+
+
+def _near_misses(turned_away: Sequence[EvaluatedPlace]) -> tuple[EvaluatedPlace, ...]:
+    """The nearest place of each kind the filter turned away, nearest first.
+
+    One per kind rather than four places outright, because breadth is the whole
+    value of this list. Four Indian restaurants a ringgit apart are four goes at
+    the same guess; a burger place, a cafe, a mamak and a noodle shop are four
+    different ones, and only one of them has to be somewhere the reader of this
+    list actually knows the menu of.
+
+    Nearest rather than cheapest, which is the one place in this module that
+    does not rank on money, and it earns it twice over. A near miss is only
+    worth mentioning if it beats the matches at something, and what it can beat
+    them at is being right here: from Bukit Bintang the tagged chicken is a
+    kilometre off and there is a McDonald's forty metres away. And the shops
+    anyone can be confident about the menu of are the chains, which is exactly
+    what "the nearest burger place to an arbitrary corner of KL" tends to be --
+    there are eight McDonald's in the shipped set and one Alfresco Café, and
+    cheapest-first picked the Alfresco every time on a tie.
+
+    Still held to the ceiling by the caller: somewhere the user cannot afford
+    is not an alternative to anything.
+    """
+    # Ties broken all the way down to the id, so the same search cannot return
+    # two different shops on two runs because a data refresh reordered a file.
+    nearest: dict[str, EvaluatedPlace] = {}
+    for place in sorted(turned_away, key=lambda p: (p.km, p.total_sen, p.id)):
+        nearest.setdefault(kind_key(place.kind), place)
+    return tuple(nearest.values())[:NEAR_MISSES]
+
+
 async def find_places(
     *,
     lat: float,
@@ -329,10 +414,14 @@ async def find_places(
 
     ``kind`` narrows to one sort of food, matched against the kinds of the
     places actually in range -- not against the shipped vocabulary, so a search
-    stays correct under a maps adapter that is not the curated one. A word
+    stays correct under a maps adapter that is not the curated one. It matches
+    any kind a place carries, not just the one it is labelled with. A word
     nothing matches returns nothing. It never widens back out to the whole
     list: an unmatched filter answered with everything is the same lie as a
     dropped "halal", and ``kind_count`` is there to say which filter it was.
+    What it turned away is not thrown away either -- a few of those places come
+    back in ``near_misses``, in their own field and under their own kinds, for
+    a caller that knows something about a menu that the tags do not.
 
     The order below is load-bearing. Routing happens after the radius and the
     halal filter and before the kind filter and the ceiling, because it is the
@@ -395,8 +484,14 @@ async def find_places(
     # Blank is nobody asking for a kind. A word that is not blank and matches
     # nothing is a different thing entirely, and comes back empty below.
     wanted = kind_key(kind) if kind and kind.strip() else None
+    # Any of the kinds a place carries, not only the one on its label. OSM
+    # states two cuisines for a fifth of the places it knows anything about,
+    # and matching on the label alone hid every one of the others: a search for
+    # fried chicken missed Nando's, which OSM tags chicken and portuguese.
     of_kind = (
-        evaluated if wanted is None else [p for p in evaluated if kind_key(p.kind) == wanted]
+        evaluated
+        if wanted is None
+        else [p for p in evaluated if any(kind_key(k) == wanted for k in p.kinds)]
     )
 
     # The ceiling runs last, on the total the road produced. Applying it to a
@@ -404,6 +499,22 @@ async def find_places(
     # the 3.7 km that is really 8.1 km of driving is RM12.05 of fare under a
     # ceiling it clears and RM20.39 in the car it does not.
     under_cap = sorted((p for p in of_kind if p.total_sen <= cap_sen), key=lambda p: p.total_sen)
+
+    # What the kind filter turned away, held to the same ceiling the list is.
+    # Disjoint from the list by id rather than by a second run of the filter,
+    # so no reading of the two can ever put one place in both -- including the
+    # place that matched on the second of the three kinds it carries.
+    #
+    # Only where a kind was actually asked for. With no filter nothing was
+    # turned away, and a "did not match" list under no filter would be a group
+    # of places with nothing in common but having been left out of nothing.
+    matched = {place.id for place in of_kind}
+    near_misses = (
+        ()
+        if wanted is None
+        else _near_misses([p for p in evaluated if p.id not in matched and p.total_sen <= cap_sen])
+    )
+
     return PlacesFound(
         places=tuple(under_cap),
         nearby_count=len(nearby),
@@ -414,6 +525,7 @@ async def find_places(
         # list: it has somewhere to go in it, and topping it up from above the
         # ceiling would be answering a question with a slightly different one.
         nearest_over_cap=() if under_cap else _nearest_over_cap(of_kind),
+        near_misses=near_misses,
     )
 
 

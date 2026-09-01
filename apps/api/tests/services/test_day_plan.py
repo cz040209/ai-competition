@@ -453,6 +453,308 @@ class TestTheKindFilter:
         assert found.kind_count == found.matching_count == 7
 
 
+class TestAPlaceWithSeveralKinds:
+    """OpenStreetMap gives a fifth of the places it knows more than one cuisine.
+
+    Nando's is ``chicken;portuguese``, and a search for fried chicken used to
+    miss it: only the first cuisine was kept and the rest were thrown away. The
+    world here is the same shape -- one place carrying two kinds, one carrying
+    only the first of them, one carrying neither.
+    """
+
+    async def _search(self, world, kind: str | None = None):
+        """The three-place world, searched on foot so the outing is the meal."""
+        with serving(places=world.multi_kind):
+            return await find_places(
+                **world.origin,
+                mode="walk",
+                halal_only=False,
+                cap_sen=100_000,
+                room_sen=100_000,
+                kind=kind,
+            )
+
+    async def test_either_of_its_kinds_finds_it(self, place_world):
+        by_label = await self._search(place_world, "Chicken")
+        by_second = await self._search(place_world, "Portuguese")
+        assert [p.name for p in by_label.places] == [
+            place_world.two_kinds.name,
+            place_world.one_kind.name,
+        ]
+        # The second kind reaches it and nothing else: matching on any kind is
+        # not the same as matching on everything.
+        assert [p.name for p in by_second.places] == [place_world.two_kinds.name]
+
+    async def test_the_second_kind_is_forgiven_the_same_one_way(self, place_world):
+        for asked in ("portuguese", "PORTUGUESE", " Portuguese "):
+            found = await self._search(place_world, asked)
+            assert [p.name for p in found.places] == [place_world.two_kinds.name], asked
+
+    async def test_the_label_it_is_shown_under_does_not_change(self, place_world):
+        """A second kind widens what finds a place. It does not rename it."""
+        found = await self._search(place_world, "Portuguese")
+        (only,) = found.places
+        assert only.kind == place_world.two_kinds.kind == "Chicken"
+        assert only.kind == (await self._search(place_world, "Chicken")).places[0].kind
+
+    async def test_the_price_does_not_change_either(self, place_world):
+        """The band came from the first cuisine and still does.
+
+        A place must not read cheaper or dearer for having been recorded as
+        serving two things -- that would move a figure on screen for a reason
+        nobody could see in the data.
+        """
+        wide = await self._search(place_world)
+        found = await self._search(place_world, "Portuguese")
+        (only,) = found.places
+        twin = next(p for p in wide.places if p.id == only.id)
+        assert only.total_sen == twin.total_sen == place_world.two_kinds.estimate.sen
+        assert only.confidence == twin.confidence == place_world.two_kinds.confidence
+
+    async def test_the_counts_say_which_filter_did_what(self, place_world):
+        found = await self._search(place_world, "Portuguese")
+        # One of the three is Portuguese; the halal filter took none of them.
+        assert found.nearby_count == found.matching_count == 3
+        assert found.kind_count == 1
+
+    async def test_it_is_counted_under_every_kind_it_carries(self, place_world):
+        """The choice: a place belongs to as many landscape rows as it has kinds.
+
+        The alternative -- counting it only under its label -- would leave the
+        Portuguese row missing while a search for Portuguese returns a place,
+        which is the landscape contradicting the list beneath it.
+        """
+        found = await self._search(place_world)
+        rows = {row.kind: row for row in found.landscape}
+        assert set(rows) == {"Chicken", "Portuguese", "Mamak"}
+        # Two chicken places, priced at the cheaper; the Portuguese row is the
+        # same place again, at the same price.
+        assert (rows["Chicken"].count, rows["Chicken"].cheapest_total_sen) == (2, 1600)
+        assert (rows["Portuguese"].count, rows["Portuguese"].cheapest_total_sen) == (1, 1600)
+        assert (rows["Mamak"].count, rows["Mamak"].cheapest_total_sen) == (1, 1200)
+        # So the counts no longer add up to the length of the list, and that is
+        # the stated cost of the choice rather than an accident.
+        assert sum(row.count for row in found.landscape) == 4
+        assert len(found.places) == 3
+
+    async def test_every_row_is_what_a_search_for_that_row_returns(self, place_world):
+        """The invariant the choice above exists to keep.
+
+        Each row promises a filter: this many places, none cheaper than this.
+        """
+        wide = await self._search(place_world)
+        for row in wide.landscape:
+            narrow = await self._search(place_world, row.kind)
+            assert narrow.kind_count == row.count, row.kind
+            assert len(narrow.places) == row.count, row.kind
+            assert min(p.total_sen for p in narrow.places) == row.cheapest_total_sen
+
+    async def test_a_place_with_one_kind_is_untouched_by_any_of_this(self, place_world):
+        found = await self._search(place_world, "Mamak")
+        (only,) = found.places
+        assert only.kind == "Mamak"
+        # Place fills the list in for itself, so nothing downstream has to ask
+        # whether a place has one kind or several.
+        assert only.kinds == ("Mamak",)
+
+
+class TestWhatTheKindFilterTurnedAway:
+    """The places a filter for chicken excluded, handed back on purpose.
+
+    OpenStreetMap records one cuisine word per place and no menu at all. It
+    calls McDonald's ``burger``, which is true and incomplete: a search for
+    chicken finds KFC and walks the user straight past a McDonald's that fries
+    chicken all day. No refresh of the data reaches that, because there is no
+    tag for it. So a few of the turned-away places come back in their own
+    field, at their own kinds and their own prices, for a caller with knowledge
+    the tags do not have -- and every one of them is still labelled what the
+    data says it is.
+
+    The seven sit at 0.05, 0.5, 0.8, 1.0, 1.2, 2.0 and 4.0 km, in an order the
+    prices deliberately do not follow, so which of the two this list is ranked
+    on is visible in every assertion below.
+    """
+
+    async def _search(self, world, kind: str | None = None, cap_sen: int = 100_000):
+        """The seven the fixture already serves, on foot so the outing is the
+        meal and every price below is the one written into the world."""
+        return await find_places(
+            **world.origin,
+            mode="walk",
+            halal_only=False,
+            cap_sen=cap_sen,
+            room_sen=100_000,
+            kind=kind,
+        )
+
+    async def test_no_kind_asked_for_turns_nothing_away(self, place_world):
+        # Nothing was filtered, so nothing missed. A "did not match" list under
+        # no filter would be places grouped by having been left out of nothing.
+        found = await self._search(place_world)
+        assert len(found.places) == 7
+        assert found.near_misses == ()
+
+    async def test_a_kind_asked_for_hands_back_what_it_excluded(self, place_world):
+        found = await self._search(place_world, "Noodles")
+        assert [p.name for p in found.places] == [place_world.noodles.name]
+        # The nearest of each other kind, nearest first. Both cafes are in
+        # range and only the one 50 m away stands for them.
+        assert [(p.name, p.kind, p.total_sen) for p in found.near_misses] == [
+            (place_world.cheap.name, "Cafe", 900),
+            (place_world.mid.name, "Mamak", 1250),
+            (place_world.near_non_halal.name, "Chinese", 1600),
+            (place_world.pricey.name, "Japanese", 5000),
+        ]
+        # Ranked on the road and not on the money: the RM50 Japanese place is
+        # here at 2 km and the RM20 Western one is not, at 4 km.
+        assert place_world.far_non_halal.name not in {p.name for p in found.near_misses}
+        assert [p.km for p in found.near_misses] == sorted(p.km for p in found.near_misses)
+
+    async def test_it_is_held_to_four_however_many_kinds_were_turned_away(self, place_world):
+        # Five other kinds are in range and the Western place is the furthest
+        # off, so it is the one that does not fit.
+        found = await self._search(place_world, "Cafe")
+        assert len(found.near_misses) == 4
+        assert place_world.far_non_halal.name not in {p.name for p in found.near_misses}
+
+    async def test_nothing_is_in_both_lists(self, place_world):
+        found = await self._search(place_world, "Cafe")
+        assert {p.id for p in found.places} & {p.id for p in found.near_misses} == set()
+        # And nothing in the second list is of the kind that was asked for,
+        # which is the same statement said the other way round.
+        assert all(kind_key(p.kind) != "cafe" for p in found.near_misses)
+
+    async def test_a_place_that_matched_on_its_second_kind_is_not_a_near_miss(self, place_world):
+        """Disjointness has to hold on the place, not on the label it wears.
+
+        Ayam Piri Piri is labelled Chicken and also carries Portuguese. A
+        search for Portuguese matches it, so it cannot also be something that
+        search turned away -- even though "Chicken" is nowhere in the filter.
+        """
+        with serving(places=place_world.multi_kind):
+            found = await find_places(
+                **place_world.origin,
+                mode="walk",
+                halal_only=False,
+                cap_sen=100_000,
+                room_sen=100_000,
+                kind="Portuguese",
+            )
+        assert [p.name for p in found.places] == [place_world.two_kinds.name]
+        assert place_world.two_kinds.id not in {p.id for p in found.near_misses}
+        assert [(p.name, p.kind) for p in found.near_misses] == [
+            (place_world.one_kind.name, "Chicken"),
+            (place_world.other_kind.name, "Mamak"),
+        ]
+
+    async def test_every_one_of_them_keeps_the_kind_the_data_gave_it(self, place_world):
+        # The whole guard. Whatever a caller goes on to claim about what a
+        # place serves, the kind on the row is the recorded one and the caller
+        # has to say the rest in its own voice.
+        found = await self._search(place_world, "Cafe")
+        by_name = {p.name: p for p in found.near_misses}
+        assert by_name[place_world.mid.name].kind == place_world.mid.kind == "Mamak"
+        assert by_name[place_world.noodles.name].kind == place_world.noodles.kind == "Noodles"
+        for place in found.near_misses:
+            assert place.kinds[0] == place.kind
+
+    async def test_the_price_is_the_one_this_search_measured(self, place_world):
+        with serving(StubRouting({"w2": 1200.0})):
+            found = await find_places(
+                **place_world.origin,
+                mode="ride",
+                halal_only=False,
+                cap_sen=100_000,
+                room_sen=100_000,
+                kind="Cafe",
+            )
+        mamak = next(p for p in found.near_misses if p.kind == "Mamak")
+        assert mamak.distance_basis == "road"
+        # The road fare, the same one the list and the landscape are priced on.
+        assert mamak.total_sen == 1250 + 728
+
+    async def test_it_never_reaches_past_the_ceiling(self, place_world):
+        # A place the user cannot afford is not an alternative to anything. The
+        # ceiling that governs the list governs this too.
+        found = await self._search(place_world, "Cafe", cap_sen=1300)
+        assert [p.name for p in found.near_misses] == [place_world.mid.name]
+        assert all(p.total_sen <= 1300 for p in found.near_misses)
+
+    async def test_a_ceiling_that_admits_nothing_turns_away_nothing_either(self, place_world):
+        found = await self._search(place_world, "Cafe", cap_sen=500)
+        assert found.places == ()
+        # ``nearest_over_cap`` is the answer to this empty list, and it stays
+        # inside the kind that was asked for. Reaching over the ceiling AND
+        # past the filter at once would be two liberties taken in one breath.
+        assert [p.name for p in found.nearest_over_cap] == [
+            place_world.cheap.name,
+            place_world.second_cafe.name,
+        ]
+        assert found.near_misses == ()
+
+    async def test_it_never_relaxes_the_halal_filter(self, place_world):
+        # Bak Kut Teh Tiga is the only Chinese place in range and is not halal.
+        # Reaching past what the user eats to offer an alternative is the one
+        # thing no list here may do.
+        found = await find_places(
+            **place_world.origin,
+            mode="walk",
+            halal_only=True,
+            cap_sen=100_000,
+            room_sen=100_000,
+            kind="Cafe",
+        )
+        assert all(p.halal for p in found.near_misses)
+        assert [p.name for p in found.near_misses] == [
+            place_world.mid.name,
+            place_world.noodles.name,
+            place_world.pricey.name,
+        ]
+
+    async def test_a_kind_that_matched_nothing_still_turns_the_rest_away(self, place_world):
+        # The most useful case of all: there is no Korean food here, and the
+        # places that are here are exactly what a caller with a menu in its head
+        # would want to look at.
+        found = await self._search(place_world, "Korean")
+        assert found.places == ()
+        assert found.kind_count == 0
+        assert len(found.near_misses) == 4
+        assert [p.name for p in found.near_misses][0] == place_world.cheap.name
+
+    async def test_none_of_them_undercuts_the_landscape_row_for_its_own_kind(self, place_world):
+        """The two halves of the payload say different things, not opposite ones.
+
+        The landscape row is the cheapest of a kind anywhere in range; a near
+        miss is the closest one, which can cost more. What must never happen is
+        a near miss cheaper than the floor its own kind was given, because then
+        one of the two figures is simply wrong.
+        """
+        found = await self._search(place_world, "Cafe")
+        rows = {kind_key(row.kind): row for row in found.landscape}
+        for place in found.near_misses:
+            assert place.total_sen >= rows[kind_key(place.kind)].cheapest_total_sen
+
+    async def test_a_crowd_of_one_kind_does_not_fill_it(self, place_world):
+        """Breadth is the point: four of the same thing is one suggestion.
+
+        The crowd is thirteen places over four kinds. Filter one of them out
+        and the other three are what comes back -- one apiece, not the four
+        nearest, which would have been three of a kind between them.
+        """
+        with serving(places=place_world.crowd):
+            found = await find_places(
+                **place_world.origin,
+                mode="walk",
+                halal_only=False,
+                cap_sen=100_000,
+                room_sen=100_000,
+                kind="Malaysian",
+            )
+        assert len(found.near_misses) == 3
+        assert len({p.kind for p in found.near_misses}) == 3
+        assert {p.kind for p in found.near_misses} == {"Noodles", "Cafe", "Indian"}
+
+
 class TestTheKindVocabulary:
     """What a model is offered, and what a sentence is checked against."""
 
@@ -462,8 +764,26 @@ class TestTheKindVocabulary:
         # nobody reading the code can see.
         from kira.adapters.fakes import KL_PLACES
 
-        assert set(known_kinds()) == {place.kind for place in KL_PLACES}
+        assert set(known_kinds()) == {kind for place in KL_PLACES for kind in place.kinds}
         assert list(known_kinds()) == sorted(known_kinds())
+
+    def test_it_offers_the_secondary_kinds_too_and_not_only_the_labels(self):
+        """A word no place is labelled with, that several places serve.
+
+        The set has two of them: nothing is labelled Sandwiches or Vietnamese,
+        but places tagged with those cuisines are in it and a search for either
+        finds them. Offering only the labels would hide a real filter -- and
+        the model is offered this vocabulary, so a word missing here is a
+        search it will never think to run.
+        """
+        from kira.adapters.fakes import KL_PLACES
+
+        labels = {place.kind for place in KL_PLACES}
+        secondary = set(known_kinds()) - labels
+        assert secondary, "the shipped set has no secondary kind left to prove this with"
+        for kind in secondary:
+            assert resolve_kind(kind) == kind
+            assert any(kind in place.kinds for place in KL_PLACES)
 
     def test_a_word_the_set_carries_resolves_to_its_own_spelling(self):
         assert resolve_kind("japanese") == "Japanese"

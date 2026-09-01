@@ -466,6 +466,11 @@ class ApprovalDecisionRequest(BaseModel):
     args: dict | None = None
 
 
+class CategoryResponse(BaseModel):
+    slug: str
+    label: str
+
+
 class MemoryResponse(ResponseModel):
     id: uuid.UUID
     kind: str
@@ -520,6 +525,78 @@ class CreateTransactionRequest(BaseModel):
     note: str = Field(default="", max_length=280)
 
 
+class MoneyOut(ResponseModel):
+    sen: int
+    currency: str
+
+
+class GoalOutlookOut(ResponseModel):
+    goal_id: str
+    target_date: date
+    probability_bp: int
+    median_shortfall: MoneyOut
+
+
+class LeverIn(BaseModel):
+    kind: Literal["goal_monthly", "commitment_amount", "daily_spend"]
+    target_id: str
+    delta_sen: int
+
+
+class LeverOut(ResponseModel):
+    kind: str
+    target_id: str
+    delta: MoneyOut
+
+
+class DriverOut(ResponseModel):
+    lever: LeverOut
+    probability_bp_before: int
+    probability_bp_after: int
+    bp_per_ringgit: int
+
+
+class ForesightResponse(ResponseModel):
+    horizon_days: int
+    dates: list[date]
+    p10: list[MoneyOut]
+    p50: list[MoneyOut]
+    p90: list[MoneyOut]
+    outlooks: list[GoalOutlookOut]
+    drivers: list[DriverOut]
+    profile_days: int
+    assumption: str
+
+
+class ScenarioRequest(BaseModel):
+    horizon_days: int = Field(default=180, ge=1, le=365)
+    levers: list[LeverIn]
+
+
+class ScenarioResultOut(ResponseModel):
+    lever: LeverOut
+    outlooks: list[GoalOutlookOut]
+    safe_today_after: MoneyOut
+
+
+class ScenarioComparisonResponse(ResponseModel):
+    results: list[ScenarioResultOut]
+
+
+class BriefingRunResponse(ResponseModel):
+    id: uuid.UUID
+    on_date: date
+    summary: str
+    proposal_count: int
+    created: bool
+
+
+class BriefingInboxResponse(ResponseModel):
+    id: uuid.UUID
+    on_date: date
+    summary: str
+    proposal_count: int
+    pending_proposal_count: int
 class CorrectTransactionRequest(BaseModel):
     """What the user says a draft should have read. Every field is optional.
 

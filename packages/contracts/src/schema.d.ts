@@ -404,6 +404,97 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/categories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Categories */
+        get: operations["list_categories_v1_categories_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/foresight": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Foresight */
+        get: operations["get_foresight_v1_foresight_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/foresight/scenarios": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Scenarios */
+        post: operations["post_scenarios_v1_foresight_scenarios_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/briefings/today": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Today Briefing
+         * @description The prepared morning inbox, if the nightly worker has run already.
+         */
+        get: operations["get_today_briefing_v1_briefings_today_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/briefings/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run Briefing
+         * @description Run today's worker path now. A retry returns the original briefing.
+         */
+        post: operations["run_briefing_v1_briefings_run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/day-plan/places": {
         parameters: {
             query?: never;
@@ -645,6 +736,44 @@ export interface components {
             /** Audio */
             audio: string;
         };
+        /** BriefingInboxResponse */
+        BriefingInboxResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * On Date
+             * Format: date
+             */
+            on_date: string;
+            /** Summary */
+            summary: string;
+            /** Proposal Count */
+            proposal_count: number;
+            /** Pending Proposal Count */
+            pending_proposal_count: number;
+        };
+        /** BriefingRunResponse */
+        BriefingRunResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * On Date
+             * Format: date
+             */
+            on_date: string;
+            /** Summary */
+            summary: string;
+            /** Proposal Count */
+            proposal_count: number;
+            /** Created */
+            created: boolean;
+        };
         /** ButlerApprovalResponse */
         ButlerApprovalResponse: {
             /**
@@ -776,6 +905,13 @@ export interface components {
             transcript: string;
             /** Fields */
             fields: components["schemas"]["CaptureFieldResponse"][];
+        };
+        /** CategoryResponse */
+        CategoryResponse: {
+            /** Slug */
+            slug: string;
+            /** Label */
+            label: string;
         };
         /** CategorySummaryResponse */
         CategorySummaryResponse: {
@@ -1027,6 +1163,37 @@ export interface components {
             /** Nearest Over Cap */
             nearest_over_cap: components["schemas"]["PlaceResponse"][];
         };
+        /** DriverOut */
+        DriverOut: {
+            lever: components["schemas"]["LeverOut"];
+            /** Probability Bp Before */
+            probability_bp_before: number;
+            /** Probability Bp After */
+            probability_bp_after: number;
+            /** Bp Per Ringgit */
+            bp_per_ringgit: number;
+        };
+        /** ForesightResponse */
+        ForesightResponse: {
+            /** Horizon Days */
+            horizon_days: number;
+            /** Dates */
+            dates: string[];
+            /** P10 */
+            p10: components["schemas"]["MoneyOut"][];
+            /** P50 */
+            p50: components["schemas"]["MoneyOut"][];
+            /** P90 */
+            p90: components["schemas"]["MoneyOut"][];
+            /** Outlooks */
+            outlooks: components["schemas"]["GoalOutlookOut"][];
+            /** Drivers */
+            drivers: components["schemas"]["DriverOut"][];
+            /** Profile Days */
+            profile_days: number;
+            /** Assumption */
+            assumption: string;
+        };
         /** GoalCreateRequest */
         GoalCreateRequest: {
             /**
@@ -1241,6 +1408,19 @@ export interface components {
              */
             projected_date: string;
         };
+        /** GoalOutlookOut */
+        GoalOutlookOut: {
+            /** Goal Id */
+            goal_id: string;
+            /**
+             * Target Date
+             * Format: date
+             */
+            target_date: string;
+            /** Probability Bp */
+            probability_bp: number;
+            median_shortfall: components["schemas"]["MoneyOut"];
+        };
         /** GoalPlanResponse */
         GoalPlanResponse: {
             /**
@@ -1358,6 +1538,26 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /** LeverIn */
+        LeverIn: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "goal_monthly" | "commitment_amount" | "daily_spend";
+            /** Target Id */
+            target_id: string;
+            /** Delta Sen */
+            delta_sen: number;
+        };
+        /** LeverOut */
+        LeverOut: {
+            /** Kind */
+            kind: string;
+            /** Target Id */
+            target_id: string;
+            delta: components["schemas"]["MoneyOut"];
+        };
         /** LoginRequest */
         LoginRequest: {
             /**
@@ -1397,6 +1597,13 @@ export interface components {
             created_at: string;
             /** Last Used At */
             last_used_at: string | null;
+        };
+        /** MoneyOut */
+        MoneyOut: {
+            /** Sen */
+            sen: number;
+            /** Currency */
+            currency: string;
         };
         /** NextCommitmentResponse */
         NextCommitmentResponse: {
@@ -1506,6 +1713,28 @@ export interface components {
             password: string;
             /** Display Name */
             display_name: string;
+        };
+        /** ScenarioComparisonResponse */
+        ScenarioComparisonResponse: {
+            /** Results */
+            results: components["schemas"]["ScenarioResultOut"][];
+        };
+        /** ScenarioRequest */
+        ScenarioRequest: {
+            /**
+             * Horizon Days
+             * @default 180
+             */
+            horizon_days: number;
+            /** Levers */
+            levers: components["schemas"]["LeverIn"][];
+        };
+        /** ScenarioResultOut */
+        ScenarioResultOut: {
+            lever: components["schemas"]["LeverOut"];
+            /** Outlooks */
+            outlooks: components["schemas"]["GoalOutlookOut"][];
+            safe_today_after: components["schemas"]["MoneyOut"];
         };
         /** TokenResponse */
         TokenResponse: {
@@ -2277,6 +2506,130 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_categories_v1_categories_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CategoryResponse"][];
+                };
+            };
+        };
+    };
+    get_foresight_v1_foresight_get: {
+        parameters: {
+            query?: {
+                horizon?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForesightResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_scenarios_v1_foresight_scenarios_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScenarioRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScenarioComparisonResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_today_briefing_v1_briefings_today_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BriefingInboxResponse"] | null;
+                };
+            };
+        };
+    };
+    run_briefing_v1_briefings_run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BriefingRunResponse"];
                 };
             };
         };
